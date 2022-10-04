@@ -71,6 +71,9 @@ class DeprecationTask extends BuildTask
                 continue;
             }
             $originalCode = file_get_contents($path);
+            if (strpos($originalCode, "\nenum ") !== false) {
+                continue;
+            }
             $newCode = $this->rewriteCode($originalCode, $path);
             if ($originalCode != $newCode) {
                 # file_put_contents($path, $newCode);
@@ -136,10 +139,16 @@ class DeprecationTask extends BuildTask
                 if (!$docblockHasDeprecated && !$methodBodyHasDeprecated) {
                     continue;
                 }
+                $from = null;
                 $deprecationFromDocblock = '';
                 if ($docblockHasDeprecated) {
-                    $deprecationFromDocblock = $this->extractDeprecationFromDocblock($docblock);
+                    list ($deprecationFromDocblock, $from) = $this->extractCleanDeprecationFromDocblock($docblock);
                 }
+                print_r([
+                    $deprecationFromDocblock,
+                    $from,
+                    $methodBodyHasDeprecated
+                ]);
                 continue;
                 // use @deprecated as the source of truth
 
@@ -169,7 +178,10 @@ class DeprecationTask extends BuildTask
         return $code;
     }
 
-    private function extractDeprecationFromDocblock(string $docblock): string
+    /**
+     * @return array - [$cleanDocblock, $from]
+     */
+    private function extractCleanDeprecationFromDocblock(string $docblock): array
     {
         $start = strpos($docblock, '@deprecated');
         // handle multiline deprecations
@@ -182,13 +194,25 @@ class DeprecationTask extends BuildTask
         $str = str_replace('     * ', '', $str);
         $str = str_replace("\n", ' ', $str);
         $str = trim($str);
-        var_dump([
-            $docblock,
-            $start,
-            $end,
-            $str
-        ]);
-        return '';
+        $str = preg_replace('#@deprecated ([0-9])\.\.([0-9])+#', '@deprecated $1:$2', $str);
+        $from = null;
+        $rx = '#@deprecated ([0-9\.:]+)#';
+        if (preg_match($rx, $str, $m)) {
+            $from = $m[1];
+            $pos = strpos($from, ':');
+            if ($pos !== false) {
+                $from = substr($from, 0, $pos);
+                preg_replace($rx, "@deprecated $from", $docblock);
+            }
+        }
+        if (preg_match('#^[0-9]+\.[0-9]+$#', $from)) {
+            $from = "$from.0";
+        }
+        // convert for use in Deprecation::notice()
+        if ($from === null || $from === '4.0.0' || $from === '5.0.0') {
+            $from = '4.12.0';
+        }
+        return [$str, $from];
     }
 
     private function getNamespace(array $ast): ?Namespace_
