@@ -1,6 +1,6 @@
 {
     "name": "emteknetnz/silverstripe-deprecator",
-    "description": "PHP 8.1 Fixer",
+    "description": "Used to assist deprecations in Silverstripe CMS 4",
     "type": "silverstripe-vendormodule",
     "require": {
         "php": "^7.4 || ^8.0",
