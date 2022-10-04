@@ -14,5 +14,10 @@
             "email": "emteknetnz@gmail.com"
         }
     ],
+    "autoload": {
+        "psr-4": {
+            "emteknetnz\\Deprecator\\": "src/"
+        }
+    },
     "minimum-stability": "dev"
 }
