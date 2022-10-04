@@ -19,7 +19,9 @@ use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\If_;
 use PhpParser\Node\Stmt\Namespace_;
+use PhpParser\NodeDumper;
 use SilverStripe\Dev\BuildTask;
+use PhpParser\PrettyPrinter;
 
 class DeprecationTask extends BuildTask
 {
@@ -70,6 +72,14 @@ class DeprecationTask extends BuildTask
             if (is_dir($path)) {
                 continue;
             }
+            if (strpos($path, '/tests/') !== false) {
+                continue;
+            }
+            //
+            // if (!preg_match('#SapphireTest.php#', $path)) {
+            //     continue;
+            // }
+            //
             $originalCode = file_get_contents($path);
             if (strpos($originalCode, "\nenum ") !== false) {
                 continue;
@@ -124,7 +134,10 @@ class DeprecationTask extends BuildTask
             // reverse methods so 'updating from the bottom' so that character offests remain correct
             $methods = array_reverse($methods);
             foreach ($methods as $method) {
-                $hasDocblock = false; // @see NodeAbstract::setDocComment() .. may be easier that string adding to file_put_contents (or maybe worse)
+                if ($method->name->name === '__construct') {
+                    continue;
+                }
+                $hasDocblock = false; // @see NodeAbstract::setDocComment() .. maybe easier that string adding to file_put_contents (or maybe worse)
                 $docComment = $method->getDocComment(); // this contains the file offset info
                 $docblock = '';
                 if ($docComment !== null) {
@@ -135,84 +148,141 @@ class DeprecationTask extends BuildTask
                 $len = $method->getEndFilePos() - $method->getStartFilePos() + 1;
                 // note: method body includes brackets and indentation
                 $methodBody = substr($code, $method->getStartFilePos(), $len);
-                $methodBodyHasDeprecated = strpos($methodBody, 'Deprecation::notice(') !== false;
+                // spaces before Deprecation::notice( are important, as we only want deprecated
+                // methods, not deprecated param types
+                $methodBodyHasDeprecated = strpos($methodBody, "\n        Deprecation::notice(") !== false;
                 if (!$docblockHasDeprecated && !$methodBodyHasDeprecated) {
                     continue;
                 }
                 $from = null;
-                $deprecationFromDocblock = '';
+                $cleanDeprecatedFromDocblock = '';
+                $cleanMessageFromDeprecationNotice = '';
+                $newDocblock = $docblock;
                 if ($docblockHasDeprecated) {
-                    list ($deprecationFromDocblock, $from) = $this->extractCleanDeprecationFromDocblock($docblock);
+                    list ($cleanDeprecatedFromDocblock, $docblockFrom, $newDocblock) = $this->extractCleanDeprecationFromDocblock($docblock);
                 }
-                print_r([
-                    $deprecationFromDocblock,
-                    $from,
-                    $methodBodyHasDeprecated
-                ]);
-                continue;
+                if ($methodBodyHasDeprecated) {
+                    list ($cleanMessageFromDeprecationNotice, $deprecationFrom, $newDeprecationNotice) = $this->extractCleanMessageFromDeprecationNotice($methodBody);
+                }
                 // use @deprecated as the source of truth
+                continue;
 
                 // process method body first so as to 'update from the bottom'
                 if ($methodBodyHasDeprecated) {
                     // standardise the Deprecation::notice()
+                    // actually, do nothing
                 } else if (!$methodBodyHasDeprecated) {
                     // add a standardised Deprecation::notice()
+                    // TODO: add in Deprecation::notcie() to method body <<<<<<<<<<<<
                 }
-                if ($docblockHasDeprecated) {
+                if ($hasDocblock) {
                     // standardise the @deprecated
-                } elseif (!$docblockHasDeprecated) {
+                    $code = implode('', [
+                        substr($code, 0, $docComment->getStartFilePos()),
+                        $newDocblock,
+                        substr($code, $docComment->getFileEndPos()),
+                    ]);
+                } elseif (!$hasDocblock) {
                     // add a standardised @deprecated
+                    $code = implode("\n", [
+                        substr($code, 0, $method->getStartFilePos()),
+                        "    /**",
+                        "     * @deprecated $cleanMessageFromDeprecationNotice",
+                        "     */",
+                        substr($code, $method->getStartFilePos()),
+                    ]);
                 }
-                var_dump([
-                    $docblock,
-                    $methodBody
-                ]);
-                die;
-                // $code = implode('', [
-                //     substr($code, 0, $method->getStartFilePos()),
-                //     "#[\ReturnTypeWillChange]\n    ",
-                //     substr($code, $method->getStartFilePos()),
-                // ]);
             }
         }
         return $code;
     }
 
-    /**
-     * @return array - [$cleanDocblock, $from]
-     */
+    private function extractCleanMessageFromDeprecationNotice(string $methodBody): array
+    {
+        $find = 'Deprecation::notice(';
+        $start = strpos($methodBody, $find);
+        $end = strpos($methodBody, ");\n");
+        if (!$end) {
+            echo $methodBody;
+            echo __FUNCTION__ . " - No end \n";
+            die;
+        }
+        $str = substr($methodBody, $start, $end - $start + 2);
+        $s = "<?php\nclass C{\nfunction F(){\n$str\n}\n}";
+
+
+        $parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7);
+        try {
+            $ast = $parser->parse($s);
+        } catch (Error $error) {
+            echo "Parse error in " . __FUNCTION__ . ": {$error->getMessage()}\n";
+            die;
+        }
+        $args = $ast[0]->stmts[0]->stmts[0]->expr->args;
+        $from = $args[0]->value->value ?? 'UNKNOWN FROM';
+        $prettyPrinter = new PrettyPrinter\Standard;
+        $cleanMessage = isset($args[1]) ? $prettyPrinter->prettyPrint([$args[1]]) : '';
+        // remove brackets
+        if (strlen($cleanMessage)) {
+            $cleanMessage = substr($cleanMessage, 1, strlen($cleanMessage) - 2);
+        }
+        $newDeprecationNotice = $str; // unchanged for now
+        return [$cleanMessage, $from, $newDeprecationNotice];
+    }
+
     private function extractCleanDeprecationFromDocblock(string $docblock): array
     {
         $start = strpos($docblock, '@deprecated');
         // handle multiline deprecations
-        $endNewline = strpos($docblock, "*\n", $start);
-        $endOther = strpos($docblock, "* @", $start);
-        $endEnd = strpos($docblock, "*/", $start); // lol
-        $arr = array_filter([$endNewline, $endOther, $endEnd]);
+        $end5Newline = strpos($docblock, "\n     *\n", $start);
+        $end5Other = strpos($docblock, "\n     * @", $start);
+        $end5End = strpos($docblock, "\n     */", $start);
+        $end7Newline = strpos($docblock, "\n       *\n", $start);
+        $end7Other = strpos($docblock, "\n       * @", $start);
+        $end7End = strpos($docblock, "\n       */", $start);
+        $end9Newline = strpos($docblock, "\n         *\n", $start);
+        $end9Other = strpos($docblock, "\n         * @", $start);
+        $end9End = strpos($docblock, "\n         */", $start);
+        $arr = array_filter([
+            $end5Newline,
+            $end5Other,
+            $end5End,
+            $end7Newline,
+            $end7Other,
+            $end7End,
+            $end9Newline,
+            $end9Other,
+            $end9End,
+        ]);
         $end = min($arr);
-        $str = substr($docblock, $start, $end - $start);
-        $str = str_replace('     * ', '', $str);
-        $str = str_replace("\n", ' ', $str);
-        $str = trim($str);
-        $str = preg_replace('#@deprecated ([0-9])\.\.([0-9])+#', '@deprecated $1:$2', $str);
+        $deprecated = substr($docblock, $start, $end - $start);
+        $deprecated = str_replace('     * ', '', $deprecated);
+        $deprecated = str_replace("\n", ' ', $deprecated);
+        $deprecated = trim($deprecated);
+        $deprecated = preg_replace('#@deprecated ([0-9])\.\.([0-9])+#', '@deprecated $1:$2', $deprecated);
         $from = null;
-        $rx = '#@deprecated ([0-9\.:]+)#';
-        if (preg_match($rx, $str, $m)) {
+        $rx = '#@deprecated ([0-9\.\:]+)#';
+        if (preg_match($rx, $deprecated, $m)) {
             $from = $m[1];
             $pos = strpos($from, ':');
             if ($pos !== false) {
                 $from = substr($from, 0, $pos);
-                preg_replace($rx, "@deprecated $from", $docblock);
+                $deprecated = preg_replace($rx, "@deprecated $from", $deprecated);
             }
         }
-        if (preg_match('#^[0-9]+\.[0-9]+$#', $from)) {
+        if (preg_match('#^[0-9]+\.[0-9]+$#', $from ?? '')) {
             $from = "$from.0";
         }
         // convert for use in Deprecation::notice()
         if ($from === null || $from === '4.0.0' || $from === '5.0.0') {
             $from = '4.12.0';
         }
-        return [$str, $from];
+        $newDocblock = implode('', [
+            substr($docblock, 0, $start),
+            $deprecated,
+            substr($docblock, $end),
+        ]);
+        return [$deprecated, $from, $newDocblock, $docblock];
     }
 
     private function getNamespace(array $ast): ?Namespace_
