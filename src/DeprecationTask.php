@@ -127,6 +127,7 @@ class DeprecationTask extends BuildTask
 
     private function updateMethods(string $code): string
     {
+        $importDeprecationClass = false;
         $ast = $this->getAst($code);
         $classes = $this->getClasses($ast);
         foreach ($classes as $class) {
@@ -150,87 +151,87 @@ class DeprecationTask extends BuildTask
                 $methodBody = substr($code, $method->getStartFilePos(), $len);
                 // spaces before Deprecation::notice( are important, as we only want deprecated
                 // methods, not deprecated param types
-                $methodBodyHasDeprecated = strpos($methodBody, "\n        Deprecation::notice(") !== false;
-                if (!$docblockHasDeprecated && !$methodBodyHasDeprecated) {
+                $methodBodyHasNotice = strpos($methodBody, "\n        Deprecation::notice(") !== false;
+                if (!$docblockHasDeprecated && !$methodBodyHasNotice) {
                     continue;
                 }
                 $from = null;
                 $cleanDeprecatedFromDocblock = '';
-                $cleanMessageFromDeprecationNotice = '';
+                $docblockFrom = '';
+                $messageFromDocblock = '';
                 $newDocblock = $docblock;
+                $messageFromNotice = '';
+                $noticeFrom = '';
                 if ($docblockHasDeprecated) {
-                    list ($cleanDeprecatedFromDocblock, $docblockFrom, $newDocblock) = $this->extractCleanDeprecationFromDocblock($docblock);
+                    list (
+                        $cleanDeprecatedFromDocblock,
+                        $docblockFrom,
+                        $messageFromDocblock,
+                        $newDocblock
+                    ) = $this->extractFromDocblock($docblock);
                 }
-                if ($methodBodyHasDeprecated) {
-                    list ($cleanMessageFromDeprecationNotice, $deprecationFrom, $newDeprecationNotice) = $this->extractCleanMessageFromDeprecationNotice($methodBody);
+                if ($methodBodyHasNotice) {
+                    list (
+                        $messageFromNotice,
+                        $noticeFrom
+                    ) = $this->extractFromMethodBody($methodBody);
                 }
-                // use @deprecated as the source of truth
-                continue;
-
                 // process method body first so as to 'update from the bottom'
-                if ($methodBodyHasDeprecated) {
-                    // standardise the Deprecation::notice()
-                    // actually, do nothing
-                } else if (!$methodBodyHasDeprecated) {
-                    // add a standardised Deprecation::notice()
-                    // TODO: add in Deprecation::notcie() to method body <<<<<<<<<<<<
+                if ($methodBodyHasNotice) {
+                    // do nothing - do not bother standardising
+                } else if (!$methodBodyHasNotice) {
+                    // add a standardised Deprecation::notice() to method body
+                    $bodyArr = explode("\n", $methodBody);
+                    for ($i = 0; $i < count($bodyArr); $i++) {
+                        $v = $bodyArr[$i];
+                        if (trim($v) == '{') {
+                            $s = str_replace("'", "\\'", ucfirst($messageFromDocblock));
+                            $bodyArr = array_merge(
+                                array_slice($bodyArr, 0, $i + 1),
+                                ["        Deprecation::notice('$docblockFrom', '$s');"],
+                                array_slice($bodyArr, $i + 1),
+                            );
+                            break;
+                        }
+                    }
+                    $code = implode("\n", [
+                        substr($code, 0, $method->getStartFilePos()),
+                        implode("\n", $bodyArr),
+                        substr($code, $method->getEndFilePos()),
+                    ]);
+                    $importDeprecationClass = true;
                 }
                 if ($hasDocblock) {
                     // standardise the @deprecated
                     $code = implode('', [
                         substr($code, 0, $docComment->getStartFilePos()),
                         $newDocblock,
-                        substr($code, $docComment->getFileEndPos()),
+                        substr($code, $docComment->getEndFilePos()),
                     ]);
                 } elseif (!$hasDocblock) {
                     // add a standardised @deprecated
                     $code = implode("\n", [
                         substr($code, 0, $method->getStartFilePos()),
                         "    /**",
-                        "     * @deprecated $cleanMessageFromDeprecationNotice",
+                        "     * @deprecated $messageFromNotice",
                         "     */",
                         substr($code, $method->getStartFilePos()),
                     ]);
                 }
             }
         }
+        if ($importDeprecationClass && strpos($code, 'use SilverStripe\\Dev\\Deprecation;') === false) {
+            $rx = "#^namespace [\\a-zA-Z0-9]+;\n#";
+            if (preg_match($rx, $code)) {
+                $code = preg_replace($rx, "$1\nuse SilverStripe\\Dev\\Deprecation;", $code, 1);
+            } else {
+                $code = str_replace("<?php\n\n", "<?php\n\nuse use SilverStripe\\Dev\\Deprecation;\n", $code);
+            }
+        }
         return $code;
     }
 
-    private function extractCleanMessageFromDeprecationNotice(string $methodBody): array
-    {
-        $find = 'Deprecation::notice(';
-        $start = strpos($methodBody, $find);
-        $end = strpos($methodBody, ");\n");
-        if (!$end) {
-            echo $methodBody;
-            echo __FUNCTION__ . " - No end \n";
-            die;
-        }
-        $str = substr($methodBody, $start, $end - $start + 2);
-        $s = "<?php\nclass C{\nfunction F(){\n$str\n}\n}";
-
-
-        $parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7);
-        try {
-            $ast = $parser->parse($s);
-        } catch (Error $error) {
-            echo "Parse error in " . __FUNCTION__ . ": {$error->getMessage()}\n";
-            die;
-        }
-        $args = $ast[0]->stmts[0]->stmts[0]->expr->args;
-        $from = $args[0]->value->value ?? 'UNKNOWN FROM';
-        $prettyPrinter = new PrettyPrinter\Standard;
-        $cleanMessage = isset($args[1]) ? $prettyPrinter->prettyPrint([$args[1]]) : '';
-        // remove brackets
-        if (strlen($cleanMessage)) {
-            $cleanMessage = substr($cleanMessage, 1, strlen($cleanMessage) - 2);
-        }
-        $newDeprecationNotice = $str; // unchanged for now
-        return [$cleanMessage, $from, $newDeprecationNotice];
-    }
-
-    private function extractCleanDeprecationFromDocblock(string $docblock): array
+    private function extractFromDocblock(string $docblock): array
     {
         $start = strpos($docblock, '@deprecated');
         // handle multiline deprecations
@@ -270,6 +271,7 @@ class DeprecationTask extends BuildTask
                 $deprecated = preg_replace($rx, "@deprecated $from", $deprecated);
             }
         }
+        $origFrom = $from;
         if (preg_match('#^[0-9]+\.[0-9]+$#', $from ?? '')) {
             $from = "$from.0";
         }
@@ -277,12 +279,43 @@ class DeprecationTask extends BuildTask
         if ($from === null || $from === '4.0.0' || $from === '5.0.0') {
             $from = '4.12.0';
         }
+        $message = trim(str_replace(['@deprecated', $origFrom], '', $deprecated));
         $newDocblock = implode('', [
             substr($docblock, 0, $start),
             $deprecated,
             substr($docblock, $end),
         ]);
-        return [$deprecated, $from, $newDocblock, $docblock];
+        return [$deprecated, $from, $message, $newDocblock];
+    }
+
+    private function extractFromMethodBody(string $methodBody): array
+    {
+        $find = 'Deprecation::notice(';
+        $start = strpos($methodBody, $find);
+        $end = strpos($methodBody, ");\n");
+        if (!$end) {
+            echo $methodBody;
+            echo __FUNCTION__ . " - No end \n";
+            die;
+        }
+        $str = substr($methodBody, $start, $end - $start + 2);
+        $s = "<?php\nclass C{\nfunction F(){\n$str\n}\n}";
+        $parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7);
+        try {
+            $ast = $parser->parse($s);
+        } catch (Error $error) {
+            echo "Parse error in " . __FUNCTION__ . ": {$error->getMessage()}\n";
+            die;
+        }
+        $args = $ast[0]->stmts[0]->stmts[0]->expr->args;
+        $from = $args[0]->value->value ?? 'UNKNOWN FROM';
+        $prettyPrinter = new PrettyPrinter\Standard;
+        $cleanMessage = isset($args[1]) ? $prettyPrinter->prettyPrint([$args[1]]) : '';
+        // remove brackets
+        if (strlen($cleanMessage)) {
+            $cleanMessage = substr($cleanMessage, 1, strlen($cleanMessage) - 2);
+        }
+        return [$cleanMessage, $from];
     }
 
     private function getNamespace(array $ast): ?Namespace_
