@@ -147,7 +147,7 @@ class DeprecationTask extends BuildTask
                     $hasDocblock = true;
                     $docblock = $docComment->getText();
                 }
-                $docblockHasDeprecated = strpos($docblock, '@deprecated') !== false;
+                $docblockHasDeprecated = strpos($docblock, '* @deprecated') !== false;
                 $len = $method->getEndFilePos() - $method->getStartFilePos() + 1;
                 // note: method body includes brackets and indentation
                 $methodBody = substr($code, $method->getStartFilePos(), $len);
@@ -191,9 +191,10 @@ class DeprecationTask extends BuildTask
                         $v = $bodyArr[$i];
                         if (trim($v) == '{') {
                             $s = str_replace("'", "\\'", ucfirst($messageFromDocblock));
+                            $s2 = $s ? "'$docblockFrom', '$s'" : "'$docblockFrom'";
                             $bodyArr = array_merge(
                                 array_slice($bodyArr, 0, $i + 1),
-                                ["        Deprecation::notice('$docblockFrom', '$s');"],
+                                ["        Deprecation::notice($s2);"],
                                 array_slice($bodyArr, $i + 1),
                             );
                             break;
@@ -216,19 +217,18 @@ class DeprecationTask extends BuildTask
                 } elseif (!$hasDocblock) {
                     // add a standardised @deprecated
                     $code = implode("\n", [
-                        substr($code, 0, $method->getStartFilePos()),
-                        "    /**",
+                        substr($code, 0, $method->getStartFilePos()) . "/**",
                         "     * @deprecated $messageFromNotice",
                         "     */",
-                        substr($code, $method->getStartFilePos()),
+                        "    " . substr($code, $method->getStartFilePos()),
                     ]);
                 }
             }
         }
         if ($importDeprecationClass && strpos($code, 'use SilverStripe\\Dev\\Deprecation;') === false) {
-            $rx = "#(\nnamespace [\\a-zA-Z0-9]+?;\n)#";
+            $rx = "#(\nnamespace [\\a-zA-Z0-9]+?;\n\n)#";
             if (preg_match($rx, $code, $m)) {
-                $code = preg_replace($rx, '$1' . "\nuse SilverStripe\\Dev\\Deprecation;", $code, 1);
+                $code = preg_replace($rx, '$1' . "use SilverStripe\\Dev\\Deprecation;\n", $code, 1);
             } else {
                 $code = str_replace("<?php\n\n", "<?php\n\nuse SilverStripe\\Dev\\Deprecation;\n", $code);
             }
