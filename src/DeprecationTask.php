@@ -88,7 +88,7 @@ class DeprecationTask extends BuildTask
             }
             $newCode = $this->rewriteCode($originalCode, $path);
             if ($originalCode != $newCode) {
-                file_put_contents($path, $newCode);
+                // file_put_contents($path, $newCode);
                 echo "Updated code in $path\n";
             } else {
                 # echo "No changes made in $path\n";
@@ -99,7 +99,8 @@ class DeprecationTask extends BuildTask
     private function rewriteCode(string $code, string $path): string
     {
         file_put_contents(BASE_PATH . '/out-01.php', $code);
-        $code = $this->updateMethods($code);
+        //$code = $this->updateMethods($code);
+        $code = $this->updateClass($code);
         file_put_contents(BASE_PATH . '/out-02.php', $code);
         return $code;
     }
@@ -127,11 +128,66 @@ class DeprecationTask extends BuildTask
         return $ast;
     }
 
+    private function updateClass(string $code): string
+    {
+        $ast = $this->getAst($code);
+        $classes = $this->getClasses($ast);
+        $classes = array_reverse($classes);
+        foreach ($classes as $class) {
+            $docComment = $class->getDocComment();
+            $docblock = '';
+            if ($docComment !== null) {
+                $hasDocblock = true;
+                $docblock = $docComment->getText();
+            }
+            if (strpos($docblock, ' * @deprecated') === false) {
+                continue;
+            }
+            list (
+                $cleanDeprecatedFromDocblock,
+                $docblockFrom,
+                $messageFromDocblock,
+                $newDocblock
+            ) = $this->extractFromDocblock($docblock, '');
+
+            // TODO: update constructor with Deprecation::notice SCOPE_CLASS
+            $methods = $this->getMethods($class);
+            $hasConstructor = false;
+            foreach ($methods as $method) {
+                if ($method->name->name === '__construct') {
+                    $hasConstructor = true;
+                    break;
+                }
+            }
+            if ($hasConstructor) {
+                foreach ($methods as $method) {
+                    if ($method->name->name === '__construct') {
+                        $len = $method->getEndFilePos() - $method->getStartFilePos() + 1;
+                        // note: method body includes brackets and indentation
+                        $methodBody = substr($code, $method->getStartFilePos(), $len);
+                        var_dump('__construct');die;
+                    }
+                }
+            } else {
+                // TODO: add __construct
+            }
+
+            // standardise the @deprecated
+            $code = implode('', [
+                substr($code, 0, $docComment->getStartFilePos()),
+                $newDocblock,
+                substr($code, $docComment->getEndFilePos() + 1),
+            ]);
+        }
+        return $code;
+    }
+
     private function updateMethods(string $code): string
     {
         $importDeprecationClass = false;
         $ast = $this->getAst($code);
         $classes = $this->getClasses($ast);
+        $classes = array_reverse($classes);
         foreach ($classes as $class) {
             $methods = $this->getMethods($class);
             // reverse methods so 'updating from the bottom' so that character offests remain correct
@@ -236,19 +292,19 @@ class DeprecationTask extends BuildTask
         return $code;
     }
 
-    private function extractFromDocblock(string $docblock): array
+    private function extractFromDocblock(string $docblock, $indent = '    '): array
     {
         $start = strpos($docblock, '@deprecated');
         // handle multiline deprecations
-        $end5Newline = strpos($docblock, "\n     *\n", $start);
-        $end5Other = strpos($docblock, "\n     * @", $start);
-        $end5End = strpos($docblock, "\n     */", $start);
-        $end7Newline = strpos($docblock, "\n       *\n", $start);
-        $end7Other = strpos($docblock, "\n       * @", $start);
-        $end7End = strpos($docblock, "\n       */", $start);
-        $end9Newline = strpos($docblock, "\n         *\n", $start);
-        $end9Other = strpos($docblock, "\n         * @", $start);
-        $end9End = strpos($docblock, "\n         */", $start);
+        $end5Newline = strpos($docblock, "\n$indent *\n", $start);
+        $end5Other = strpos($docblock, "\n$indent * @", $start);
+        $end5End = strpos($docblock, "\n$indent */", $start);
+        $end7Newline = strpos($docblock, "\n$indent   *\n", $start);
+        $end7Other = strpos($docblock, "\n$indent   * @", $start);
+        $end7End = strpos($docblock, "\n$indent   */", $start);
+        $end9Newline = strpos($docblock, "\n$indent     *\n", $start);
+        $end9Other = strpos($docblock, "\n$indent     * @", $start);
+        $end9End = strpos($docblock, "\n$indent     */", $start);
         $arr = array_filter([
             $end5Newline,
             $end5Other,
@@ -271,6 +327,9 @@ class DeprecationTask extends BuildTask
         if (preg_match($rx, $deprecated, $m)) {
             $from = $m[1];
             $pos = strpos($from, ':');
+            if ($pos === false) {
+                $pos = strpos($from, '..');
+            }
             if ($pos !== false) {
                 $from = substr($from, 0, $pos);
                 $deprecated = preg_replace($rx, "@deprecated $from", $deprecated);
