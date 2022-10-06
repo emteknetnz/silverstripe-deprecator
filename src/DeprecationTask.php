@@ -54,7 +54,12 @@ class DeprecationTask extends BuildTask
                 if ($dir != '/var/www/vendor/silverstripe/framework') {
                     continue;
                 }
-                foreach (['src', 'code', 'tests', 'thirdparty'] as $d) {
+                foreach ([
+                    'src',
+                    'code',
+                    // 'tests',
+                    // 'thirdparty'
+                ] as $d) {
                     $subdir = "$dir/$d";
                     if (file_exists($subdir)) {
                         $this->update($subdir);
@@ -72,9 +77,6 @@ class DeprecationTask extends BuildTask
             if (is_dir($path)) {
                 continue;
             }
-            if (strpos($path, '/tests/') !== false) {
-                continue;
-            }
             //
             // if (!preg_match('#SapphireTest.php#', $path)) {
             //     continue;
@@ -86,10 +88,10 @@ class DeprecationTask extends BuildTask
             }
             $newCode = $this->rewriteCode($originalCode, $path);
             if ($originalCode != $newCode) {
-                # file_put_contents($path, $newCode);
-                # echo "Updated code in $path\n";
+                file_put_contents($path, $newCode);
+                echo "Updated code in $path\n";
             } else {
-                // echo "No changes made in $path\n";
+                # echo "No changes made in $path\n";
             }
         }
     }
@@ -99,7 +101,7 @@ class DeprecationTask extends BuildTask
         file_put_contents(BASE_PATH . '/out-01.php', $code);
         $code = $this->updateMethods($code);
         file_put_contents(BASE_PATH . '/out-02.php', $code);
-        return '';
+        return $code;
     }
 
     private function getAst(string $code): array
@@ -181,6 +183,9 @@ class DeprecationTask extends BuildTask
                     // do nothing - do not bother standardising
                 } else if (!$methodBodyHasNotice) {
                     // add a standardised Deprecation::notice() to method body
+                    if (strpos($methodBody, 'gmt_date(') !== false) {
+                        $a=1;
+                    }
                     $bodyArr = explode("\n", $methodBody);
                     for ($i = 0; $i < count($bodyArr); $i++) {
                         $v = $bodyArr[$i];
@@ -194,10 +199,10 @@ class DeprecationTask extends BuildTask
                             break;
                         }
                     }
-                    $code = implode("\n", [
+                    $code = implode("", [
                         substr($code, 0, $method->getStartFilePos()),
                         implode("\n", $bodyArr),
-                        substr($code, $method->getEndFilePos()),
+                        substr($code, $method->getEndFilePos() + 1),
                     ]);
                     $importDeprecationClass = true;
                 }
@@ -206,7 +211,7 @@ class DeprecationTask extends BuildTask
                     $code = implode('', [
                         substr($code, 0, $docComment->getStartFilePos()),
                         $newDocblock,
-                        substr($code, $docComment->getEndFilePos()),
+                        substr($code, $docComment->getEndFilePos() + 1),
                     ]);
                 } elseif (!$hasDocblock) {
                     // add a standardised @deprecated
@@ -221,11 +226,11 @@ class DeprecationTask extends BuildTask
             }
         }
         if ($importDeprecationClass && strpos($code, 'use SilverStripe\\Dev\\Deprecation;') === false) {
-            $rx = "#^namespace [\\a-zA-Z0-9]+;\n#";
-            if (preg_match($rx, $code)) {
-                $code = preg_replace($rx, "$1\nuse SilverStripe\\Dev\\Deprecation;", $code, 1);
+            $rx = "#(\nnamespace [\\a-zA-Z0-9]+?;\n)#";
+            if (preg_match($rx, $code, $m)) {
+                $code = preg_replace($rx, '$1' . "\nuse SilverStripe\\Dev\\Deprecation;", $code, 1);
             } else {
-                $code = str_replace("<?php\n\n", "<?php\n\nuse use SilverStripe\\Dev\\Deprecation;\n", $code);
+                $code = str_replace("<?php\n\n", "<?php\n\nuse SilverStripe\\Dev\\Deprecation;\n", $code);
             }
         }
         return $code;
