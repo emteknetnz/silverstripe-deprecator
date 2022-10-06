@@ -54,7 +54,12 @@ class DeprecationTask extends BuildTask
                 if ($dir != '/var/www/vendor/silverstripe/framework') {
                     continue;
                 }
-                foreach (['src', 'code', 'tests', 'thirdparty'] as $d) {
+                foreach ([
+                    'src',
+                    'code',
+                    // 'tests',
+                    // 'thirdparty'
+                ] as $d) {
                     $subdir = "$dir/$d";
                     if (file_exists($subdir)) {
                         $this->update($subdir);
@@ -72,9 +77,6 @@ class DeprecationTask extends BuildTask
             if (is_dir($path)) {
                 continue;
             }
-            if (strpos($path, '/tests/') !== false) {
-                continue;
-            }
             //
             // if (!preg_match('#SapphireTest.php#', $path)) {
             //     continue;
@@ -86,10 +88,10 @@ class DeprecationTask extends BuildTask
             }
             $newCode = $this->rewriteCode($originalCode, $path);
             if ($originalCode != $newCode) {
-                # file_put_contents($path, $newCode);
-                # echo "Updated code in $path\n";
+                file_put_contents($path, $newCode);
+                echo "Updated code in $path\n";
             } else {
-                // echo "No changes made in $path\n";
+                # echo "No changes made in $path\n";
             }
         }
     }
@@ -99,7 +101,7 @@ class DeprecationTask extends BuildTask
         file_put_contents(BASE_PATH . '/out-01.php', $code);
         $code = $this->updateMethods($code);
         file_put_contents(BASE_PATH . '/out-02.php', $code);
-        return '';
+        return $code;
     }
 
     private function getAst(string $code): array
@@ -224,8 +226,9 @@ class DeprecationTask extends BuildTask
             $rx = "#^namespace [\\a-zA-Z0-9]+;\n#";
             if (preg_match($rx, $code)) {
                 $code = preg_replace($rx, "$1\nuse SilverStripe\\Dev\\Deprecation;", $code, 1);
+                var_dump($code);die;
             } else {
-                $code = str_replace("<?php\n\n", "<?php\n\nuse use SilverStripe\\Dev\\Deprecation;\n", $code);
+                $code = str_replace("<?php\n\n", "<?php\n\nuse SilverStripe\\Dev\\Deprecation;\n", $code);
             }
         }
         return $code;
