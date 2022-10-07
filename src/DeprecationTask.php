@@ -22,6 +22,7 @@ use PhpParser\Node\Stmt\Namespace_;
 use PhpParser\NodeDumper;
 use SilverStripe\Dev\BuildTask;
 use PhpParser\PrettyPrinter;
+use SilverStripe\Dev\Deprecation;
 
 class DeprecationTask extends BuildTask
 {
@@ -150,7 +151,7 @@ class DeprecationTask extends BuildTask
                 $newDocblock
             ) = $this->extractFromDocblock($docblock, '');
 
-            // TODO: update constructor with Deprecation::notice SCOPE_CLASS
+            // Update constructor with Deprecation::notice SCOPE_CLASS
             $methods = $this->getMethods($class);
             $hasConstructor = false;
             foreach ($methods as $method) {
@@ -165,11 +166,33 @@ class DeprecationTask extends BuildTask
                         $len = $method->getEndFilePos() - $method->getStartFilePos() + 1;
                         // note: method body includes brackets and indentation
                         $methodBody = substr($code, $method->getStartFilePos(), $len);
-                        var_dump('__construct');die;
+                        $this->addNoticeToMethod($methodBody, $method, $code, $messageFromDocblock, $docblockFrom, Deprecation::SCOPE_CLASS);
                     }
                 }
             } else {
-                // TODO: add __construct
+                $s = str_replace("'", "\\'", ucfirst($messageFromDocblock));
+                $s2 = $s ? "'$docblockFrom', '$s'" : "'$docblockFrom'";
+                $s2 .= ", Deprecation::SCOPE_CLASS";
+                if (count($methods)) {
+                    foreach ($methods as $method) {
+                        $code = implode('', [
+                            substr($code, 0, $method->getStartFilePos()),
+                            implode("\n", [
+                                'public function __construct(): void',
+                                '    {',
+                                "        Deprecation::notice($s2);",
+                                '    }',
+                                '',
+                                ''
+                            ]),
+                            '    ' . substr($code, $method->getStartFilePos()),
+                        ]);
+                        break;
+                    }
+                } else {
+                    // deprecated class with no methods edge case, probably don't exist
+                    var_dump('EDGE CASE');die;
+                }
             }
 
             // standardise the @deprecated
@@ -239,28 +262,7 @@ class DeprecationTask extends BuildTask
                     // do nothing - do not bother standardising
                 } else if (!$methodBodyHasNotice) {
                     // add a standardised Deprecation::notice() to method body
-                    if (strpos($methodBody, 'gmt_date(') !== false) {
-                        $a=1;
-                    }
-                    $bodyArr = explode("\n", $methodBody);
-                    for ($i = 0; $i < count($bodyArr); $i++) {
-                        $v = $bodyArr[$i];
-                        if (trim($v) == '{') {
-                            $s = str_replace("'", "\\'", ucfirst($messageFromDocblock));
-                            $s2 = $s ? "'$docblockFrom', '$s'" : "'$docblockFrom'";
-                            $bodyArr = array_merge(
-                                array_slice($bodyArr, 0, $i + 1),
-                                ["        Deprecation::notice($s2);"],
-                                array_slice($bodyArr, $i + 1),
-                            );
-                            break;
-                        }
-                    }
-                    $code = implode("", [
-                        substr($code, 0, $method->getStartFilePos()),
-                        implode("\n", $bodyArr),
-                        substr($code, $method->getEndFilePos() + 1),
-                    ]);
+                    $this->addNoticeToMethod($methodBody, $method, $code, $messageFromDocblock, $docblockFrom);
                     $importDeprecationClass = true;
                 }
                 if ($hasDocblock) {
@@ -290,6 +292,32 @@ class DeprecationTask extends BuildTask
             }
         }
         return $code;
+    }
+
+    private function addNoticeToMethod($methodBody, $method, &$code, $messageFromDocblock, $docblockFrom, $scope = Deprecation::SCOPE_METHOD)
+    {
+        $bodyArr = explode("\n", $methodBody);
+        for ($i = 0; $i < count($bodyArr); $i++) {
+            $v = $bodyArr[$i];
+            if (trim($v) == '{') {
+                $s = str_replace("'", "\\'", ucfirst($messageFromDocblock));
+                $s2 = $s ? "'$docblockFrom', '$s'" : "'$docblockFrom'";
+                if ($scope == Deprecation::SCOPE_CLASS) {
+                    $s2 .= ", Deprecation::SCOPE_CLASS";
+                }
+                $bodyArr = array_merge(
+                    array_slice($bodyArr, 0, $i + 1),
+                    ["        Deprecation::notice($s2);"],
+                    array_slice($bodyArr, $i + 1),
+                );
+                break;
+            }
+        }
+        $code = implode("", [
+            substr($code, 0, $method->getStartFilePos()),
+            implode("\n", $bodyArr),
+            substr($code, $method->getEndFilePos() + 1),
+        ]);
     }
 
     private function extractFromDocblock(string $docblock, $indent = '    '): array
@@ -343,7 +371,7 @@ class DeprecationTask extends BuildTask
         if ($from === null || $from === '4.0.0' || $from === '5.0.0') {
             $from = '4.12.0';
         }
-        $message = trim(str_replace(['@deprecated', $origFrom], '', $deprecated));
+        $message = trim(str_replace(["@deprecated $origFrom"], '', $deprecated));
         $newDocblock = implode('', [
             substr($docblock, 0, $start),
             $deprecated,
