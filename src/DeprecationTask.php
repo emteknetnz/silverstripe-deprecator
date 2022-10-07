@@ -78,21 +78,21 @@ class DeprecationTask extends BuildTask
             if (is_dir($path)) {
                 continue;
             }
-            //
-            // if (!preg_match('#SapphireTest.php#', $path)) {
-            //     continue;
-            // }
-            //
+            // these files have messed up indendation, do manually
+            if (strpos($path, 'SapphireTest.php') !== false || strpos($path, 'FunctionalTest.php') !== false) {
+                continue;
+            }
             $originalCode = file_get_contents($path);
             if (strpos($originalCode, "\nenum ") !== false) {
                 continue;
             }
+            echo "Looked at code in $path\n";
             $newCode = $this->rewriteCode($originalCode, $path);
             if ($originalCode != $newCode) {
-                // file_put_contents($path, $newCode);
+                file_put_contents($path, $newCode);
                 echo "Updated code in $path\n";
             } else {
-                # echo "No changes made in $path\n";
+                echo "No changes made in $path\n";
             }
         }
     }
@@ -100,7 +100,7 @@ class DeprecationTask extends BuildTask
     private function rewriteCode(string $code, string $path): string
     {
         file_put_contents(BASE_PATH . '/out-01.php', $code);
-        //$code = $this->updateMethods($code);
+        $code = $this->updateMethods($code);
         $code = $this->updateClass($code);
         file_put_contents(BASE_PATH . '/out-02.php', $code);
         return $code;
@@ -384,7 +384,7 @@ class DeprecationTask extends BuildTask
     {
         $find = 'Deprecation::notice(';
         $start = strpos($methodBody, $find);
-        $end = strpos($methodBody, ");\n");
+        $end = strpos($methodBody, ");\n", $start);
         if (!$end) {
             echo $methodBody;
             echo __FUNCTION__ . " - No end \n";
@@ -395,7 +395,8 @@ class DeprecationTask extends BuildTask
         $parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7);
         try {
             $ast = $parser->parse($s);
-        } catch (Error $error) {
+        } catch (Error|\Exception $error) {
+            echo "$s\n";
             echo "Parse error in " . __FUNCTION__ . ": {$error->getMessage()}\n";
             die;
         }
