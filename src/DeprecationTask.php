@@ -4,22 +4,11 @@ namespace emteknetnz\Deprecator;
 
 use PhpParser\Error;
 use PhpParser\Lexer;
-use PhpParser\Node\Arg;
-use PhpParser\Node\Expr;
-use PhpParser\Node\Expr\ArrayDimFetch;
-use PhpParser\Node\Expr\ClassConstFetch;
-use PhpParser\Node\Expr\ConstFetch;
-use PhpParser\Node\Expr\FuncCall;
-use PhpParser\Node\Expr\MethodCall;
-use PhpParser\Node\Expr\PropertyFetch;
-use PhpParser\Node\Expr\StaticCall;
-use PhpParser\Node\Expr\Variable;
 use PhpParser\ParserFactory;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\If_;
 use PhpParser\Node\Stmt\Namespace_;
-use PhpParser\NodeDumper;
 use SilverStripe\Dev\BuildTask;
 use PhpParser\PrettyPrinter;
 use SilverStripe\Dev\Deprecation;
@@ -31,6 +20,11 @@ class DeprecationTask extends BuildTask
     protected $title = 'DeprecationTask';
 
     protected $description = 'Used to assist deprecations in Silverstripe CMS 4';
+
+    private $c = 0;
+    private $maxC = 200000;
+
+    private $updatedDirs = [];
 
     public function run($request)
     {
@@ -68,13 +62,17 @@ class DeprecationTask extends BuildTask
                 }
             }
         }
+        echo "Update in dirs:\n";
+        print_r($this->updatedDirs);
     }
+
 
     public function update(string $dir)
     {
         $paths = explode("\n", shell_exec("find $dir | grep .php"));
         $paths = array_filter($paths, fn($f) => strtolower(pathinfo($f, PATHINFO_EXTENSION)) == 'php');
         foreach ($paths as $path) {
+            $this->cTest();
             if (is_dir($path)) {
                 continue;
             }
@@ -86,13 +84,13 @@ class DeprecationTask extends BuildTask
             if (strpos($originalCode, "\nenum ") !== false) {
                 continue;
             }
-            echo "Looked at code in $path\n";
             $newCode = $this->rewriteCode($originalCode, $path);
             if ($originalCode != $newCode) {
                 file_put_contents($path, $newCode);
                 echo "Updated code in $path\n";
+                $this->updatedDirs[$dir] = true;
             } else {
-                echo "No changes made in $path\n";
+                // echo "No changes made in $path\n";
             }
         }
     }
@@ -135,6 +133,7 @@ class DeprecationTask extends BuildTask
         $classes = $this->getClasses($ast);
         $classes = array_reverse($classes);
         foreach ($classes as $class) {
+            $this->cTest();
             $docComment = $class->getDocComment();
             $docblock = '';
             if ($docComment !== null) {
@@ -155,6 +154,7 @@ class DeprecationTask extends BuildTask
             $methods = $this->getMethods($class);
             $hasConstructor = false;
             foreach ($methods as $method) {
+                $this->cTest();
                 if ($method->name->name === '__construct') {
                     $hasConstructor = true;
                     break;
@@ -166,7 +166,9 @@ class DeprecationTask extends BuildTask
                         $len = $method->getEndFilePos() - $method->getStartFilePos() + 1;
                         // note: method body includes brackets and indentation
                         $methodBody = substr($code, $method->getStartFilePos(), $len);
-                        $this->addNoticeToMethod($methodBody, $method, $code, $messageFromDocblock, $docblockFrom, Deprecation::SCOPE_CLASS);
+                        if (strpos($methodBody, 'Deprecation::notice(') === false) {
+                            $this->addNoticeToMethod($methodBody, $method, $code, $messageFromDocblock, $docblockFrom, Deprecation::SCOPE_CLASS);
+                        }
                     }
                 }
             } else {
@@ -178,7 +180,7 @@ class DeprecationTask extends BuildTask
                         $code = implode('', [
                             substr($code, 0, $method->getStartFilePos()),
                             implode("\n", [
-                                'public function __construct(): void',
+                                'public function __construct()',
                                 '    {',
                                 "        Deprecation::notice($s2);",
                                 '    }',
@@ -212,10 +214,12 @@ class DeprecationTask extends BuildTask
         $classes = $this->getClasses($ast);
         $classes = array_reverse($classes);
         foreach ($classes as $class) {
+            $this->cTest();
             $methods = $this->getMethods($class);
             // reverse methods so 'updating from the bottom' so that character offests remain correct
             $methods = array_reverse($methods);
             foreach ($methods as $method) {
+                $this->cTest();
                 if ($method->name->name === '__construct') {
                     continue;
                 }
@@ -292,6 +296,14 @@ class DeprecationTask extends BuildTask
             }
         }
         return $code;
+    }
+
+    private function cTest()
+    {
+        if ($this->c++ > $this->maxC) {
+            echo "MAX C\n";
+            die;
+        }
     }
 
     private function addNoticeToMethod($methodBody, $method, &$code, $messageFromDocblock, $docblockFrom, $scope = Deprecation::SCOPE_METHOD)
