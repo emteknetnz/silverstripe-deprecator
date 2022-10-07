@@ -129,6 +129,7 @@ class DeprecationTask extends BuildTask
 
     private function updateClass(string $code): string
     {
+        $importDeprecationClass = false;
         $ast = $this->getAst($code);
         $classes = $this->getClasses($ast);
         $classes = array_reverse($classes);
@@ -168,6 +169,7 @@ class DeprecationTask extends BuildTask
                         $methodBody = substr($code, $method->getStartFilePos(), $len);
                         if (strpos($methodBody, 'Deprecation::notice(') === false) {
                             $this->addNoticeToMethod($methodBody, $method, $code, $messageFromDocblock, $docblockFrom, Deprecation::SCOPE_CLASS);
+                            $importDeprecationClass = true;
                         }
                     }
                 }
@@ -189,6 +191,7 @@ class DeprecationTask extends BuildTask
                             ]),
                             '    ' . substr($code, $method->getStartFilePos()),
                         ]);
+                        $importDeprecationClass = true;
                         break;
                     }
                 } else {
@@ -203,6 +206,9 @@ class DeprecationTask extends BuildTask
                 $newDocblock,
                 substr($code, $docComment->getEndFilePos() + 1),
             ]);
+        }
+        if ($importDeprecationClass) {
+            $this->addImport($code);
         }
         return $code;
     }
@@ -287,15 +293,23 @@ class DeprecationTask extends BuildTask
                 }
             }
         }
-        if ($importDeprecationClass && strpos($code, 'use SilverStripe\\Dev\\Deprecation;') === false) {
-            $rx = "#(\nnamespace [\\a-zA-Z0-9]+?;\n\n)#";
-            if (preg_match($rx, $code, $m)) {
-                $code = preg_replace($rx, '$1' . "use SilverStripe\\Dev\\Deprecation;\n", $code, 1);
-            } else {
-                $code = str_replace("<?php\n\n", "<?php\n\nuse SilverStripe\\Dev\\Deprecation;\n", $code);
-            }
+        if ($importDeprecationClass) {
+            $this->addImport($code);
         }
         return $code;
+    }
+
+    private function addImport(&$code)
+    {
+        if (strpos($code, 'use SilverStripe\\Dev\\Deprecation;') !== false) {
+            return;
+        }
+        $rx = "#(\nnamespace [\\a-zA-Z0-9]+?;\n\n)#";
+        if (preg_match($rx, $code, $m)) {
+            $code = preg_replace($rx, '$1' . "use SilverStripe\\Dev\\Deprecation;\n", $code, 1);
+        } else {
+            $code = str_replace("<?php\n\n", "<?php\n\nuse SilverStripe\\Dev\\Deprecation;\n", $code);
+        }
     }
 
     private function cTest()
