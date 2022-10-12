@@ -395,6 +395,13 @@ class DeprecationTask extends BuildTask
         if (!$message && $messageFromNotice) {
             $deprecated = $deprecated . ' ' . $messageFromNotice;
         }
+        if (preg_match('#@deprecated [a-zA-Z]#', $deprecated)) {
+            $deprecated = str_replace('@deprecated', "@deprecated $from", $deprecated);
+        }
+        $rx = '#(@deprecated [0-9\.]+ )([a-z])#';
+        if (preg_match($rx, $deprecated, $m)) {
+            $deprecated = preg_replace($rx, '$1' . strtoupper($m[2]), $deprecated);
+        }
         $newDocblock = implode('', [
             substr($docblock, 0, $start),
             str_replace($origFrom, $from, $deprecated),
