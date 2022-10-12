@@ -138,18 +138,16 @@ class DeprecationTask extends BuildTask
             $docComment = $class->getDocComment();
             $docblock = '';
             if ($docComment !== null) {
-                $hasDocblock = true;
                 $docblock = $docComment->getText();
             }
             if (strpos($docblock, ' * @deprecated') === false) {
                 continue;
             }
             list (
-                $cleanDeprecatedFromDocblock,
                 $docblockFrom,
                 $messageFromDocblock,
                 $newDocblock
-            ) = $this->extractFromDocblock($docblock, '');
+            ) = $this->extractFromDocblock($docblock, '', '', '');
 
             // Update constructor with Deprecation::notice SCOPE_CLASS
             $methods = $this->getMethods($class);
@@ -170,6 +168,9 @@ class DeprecationTask extends BuildTask
                         if (strpos($methodBody, 'Deprecation::notice(') === false) {
                             $this->addNoticeToMethod($methodBody, $method, $code, $messageFromDocblock, $docblockFrom, Deprecation::SCOPE_CLASS);
                             $importDeprecationClass = true;
+                        } else {
+                            $methodBody = preg_replace("#\s+Deprecation::notice.+?\);#s", '', $methodBody);
+                            $this->addNoticeToMethod($methodBody, $method, $code, $messageFromDocblock, $docblockFrom, Deprecation::SCOPE_CLASS);
                         }
                     }
                 }
@@ -246,30 +247,28 @@ class DeprecationTask extends BuildTask
                 if (!$docblockHasDeprecated && !$methodBodyHasNotice) {
                     continue;
                 }
-                $from = null;
-                $cleanDeprecatedFromDocblock = '';
+                $noticeFrom = '';
+                $messageFromNotice = '';
                 $docblockFrom = '';
                 $messageFromDocblock = '';
                 $newDocblock = $docblock;
-                $messageFromNotice = '';
-                $noticeFrom = '';
+                if ($methodBodyHasNotice) {
+                    list (
+                        $noticeFrom,
+                        $messageFromNotice,
+                    ) = $this->extractFromMethodBody($methodBody, $docblockFrom, $messageFromNotice);
+                }
                 if ($docblockHasDeprecated) {
                     list (
-                        $cleanDeprecatedFromDocblock,
                         $docblockFrom,
                         $messageFromDocblock,
                         $newDocblock
-                    ) = $this->extractFromDocblock($docblock);
-                }
-                if ($methodBodyHasNotice) {
-                    list (
-                        $messageFromNotice,
-                        $noticeFrom
-                    ) = $this->extractFromMethodBody($methodBody);
+                    ) = $this->extractFromDocblock($docblock, $noticeFrom, $messageFromNotice);
                 }
                 // process method body first so as to 'update from the bottom'
                 if ($methodBodyHasNotice) {
-                    // do nothing - do not bother standardising
+                    $methodBody = preg_replace("#\s+Deprecation::notice.+?\);#s", '', $methodBody);
+                    $this->addNoticeToMethod($methodBody, $method, $code, $messageFromDocblock ?: $messageFromNotice, $docblockFrom ?: $noticeFrom);
                 } else if (!$methodBodyHasNotice) {
                     // add a standardised Deprecation::notice() to method body
                     $this->addNoticeToMethod($methodBody, $method, $code, $messageFromDocblock, $docblockFrom);
@@ -286,7 +285,7 @@ class DeprecationTask extends BuildTask
                     // add a standardised @deprecated
                     $code = implode("\n", [
                         substr($code, 0, $method->getStartFilePos()) . "/**",
-                        "     * @deprecated $messageFromNotice",
+                        "     * @deprecated $noticeFrom $messageFromNotice",
                         "     */",
                         "    " . substr($code, $method->getStartFilePos()),
                     ]);
@@ -346,7 +345,7 @@ class DeprecationTask extends BuildTask
         ]);
     }
 
-    private function extractFromDocblock(string $docblock, $indent = '    '): array
+    private function extractFromDocblock($docblock, $noticeFrom = '', $messageFromNotice = '', $indent = '    '): array
     {
         $start = strpos($docblock, '@deprecated');
         // handle multiline deprecations
@@ -390,20 +389,33 @@ class DeprecationTask extends BuildTask
             }
         }
         $origFrom = $from;
+        $from = $from ?: $noticeFrom;
+        $from = $this->cleanFrom($from);
+        $message = trim(str_replace(["@deprecated $origFrom"], '', $deprecated));
+        if (!$message && $messageFromNotice) {
+            $deprecated = $deprecated . ' ' . $messageFromNotice;
+        }
+        $newDocblock = implode('', [
+            substr($docblock, 0, $start),
+            str_replace($origFrom, $from, $deprecated),
+            substr($docblock, $end),
+        ]);
+        return [$from, $message, $newDocblock];
+    }
+
+    private function cleanFrom($from)
+    {
         if (preg_match('#^[0-9]+\.[0-9]+$#', $from ?? '')) {
             $from = "$from.0";
         }
         // convert for use in Deprecation::notice()
-        if ($from === null || $from === '4.0.0' || $from === '5.0.0') {
+        if (!$from || $from === '5.0.0') {
             $from = '4.12.0';
         }
-        $message = trim(str_replace(["@deprecated $origFrom"], '', $deprecated));
-        $newDocblock = implode('', [
-            substr($docblock, 0, $start),
-            $deprecated,
-            substr($docblock, $end),
-        ]);
-        return [$deprecated, $from, $message, $newDocblock];
+        if ($from === '4.0.0') {
+            $from = '4.0.1';
+        }
+        return $from;
     }
 
     private function extractFromMethodBody(string $methodBody): array
@@ -427,14 +439,15 @@ class DeprecationTask extends BuildTask
             die;
         }
         $args = $ast[0]->stmts[0]->stmts[0]->expr->args;
-        $from = $args[0]->value->value ?? 'UNKNOWN FROM';
+        $from = $args[0]->value->value ?? '4.12.0';
+        $from = $this->cleanFrom($from);
         $prettyPrinter = new PrettyPrinter\Standard;
         $cleanMessage = isset($args[1]) ? $prettyPrinter->prettyPrint([$args[1]]) : '';
         // remove brackets
         if (strlen($cleanMessage)) {
             $cleanMessage = substr($cleanMessage, 1, strlen($cleanMessage) - 2);
         }
-        return [$cleanMessage, $from];
+        return [$from, $cleanMessage];
     }
 
     private function getNamespace(array $ast): ?Namespace_
