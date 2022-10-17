@@ -275,7 +275,13 @@ class DeprecationTask extends BuildTask
                     $importDeprecationClass = true;
                 }
                 if ($hasDocblock) {
-                    // standardise the @deprecated
+                    if (!$docblockHasDeprecated) {
+                        $newDocblock = str_replace(
+                            "     */",
+                            "     * @deprecated $noticeFrom $messageFromNotice\n     */",
+                            $newDocblock
+                        );
+                    }
                     $code = implode('', [
                         substr($code, 0, $docComment->getStartFilePos()),
                         $newDocblock,
