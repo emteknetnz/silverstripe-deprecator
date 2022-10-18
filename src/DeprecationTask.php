@@ -46,7 +46,7 @@ class DeprecationTask extends BuildTask
                     continue;
                 }
                 $dir = "$vendorDir/$subdir";
-                if ($dir != '/var/www/vendor/symbiote/silverstripe-gridfieldextensions') {
+                if ($dir != '/var/www/vendor/silverstripe/cms') {
                     continue;
                 }
                 /*
