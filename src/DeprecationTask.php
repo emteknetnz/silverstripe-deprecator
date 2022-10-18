@@ -29,9 +29,9 @@ class DeprecationTask extends BuildTask
     public function run($request)
     {
         $vendorDirs = [
-            // BASE_PATH . '/vendor/dnadesign',
+            BASE_PATH . '/vendor/dnadesign',
             BASE_PATH . '/vendor/silverstripe',
-            // BASE_PATH . '/vendor/symbiote',
+            BASE_PATH . '/vendor/symbiote',
             // BASE_PATH . '/vendor/bringyourownideas',
             // BASE_PATH . '/vendor/colymba',
             // BASE_PATH . '/vendor/cwp',
@@ -46,9 +46,25 @@ class DeprecationTask extends BuildTask
                     continue;
                 }
                 $dir = "$vendorDir/$subdir";
-                if ($dir == '/var/www/vendor/silverstripe/framework') {
+                if ($dir != '/var/www/vendor/symbiote/silverstripe-gridfieldextensions') {
                     continue;
                 }
+                /*
+                D admin
+                D asset-admin
+                W assets
+                D behat-extension
+                D campaign-admin
+                D cms
+                D config
+                D framework`
+                D recipe-plugin
+                D vendor-plugin
+                D versioned
+                D versioned-admin
+                D dnadesign/silverstripe-elemental
+                None symbiote/silvestripe-gridfieldextensions
+                */
                 foreach ([
                     'src',
                     'code',
@@ -196,8 +212,26 @@ class DeprecationTask extends BuildTask
                         break;
                     }
                 } else {
-                    // deprecated class with no methods edge case, probably don't exist
-                    var_dump('EDGE CASE');die;
+                    $lines = explode("\n", $code);
+                    $i = -1;
+                    foreach ($lines as $line) {
+                        $i++;
+                        if (str_contains($line, 'class')) {
+                            break;
+                        }
+                    }
+                    $lines = array_merge(
+                        array_slice($lines, 0, $i + 2),
+                        [implode("\n", [
+                            '    public function __construct()',
+                            '    {',
+                            "        Deprecation::notice($s2);",
+                            '    }',
+                        ])],
+                        array_slice($lines, $i + 2),
+                    );
+                    $code = implode("\n", $lines);
+                    $importDeprecationClass = true;
                 }
             }
 
