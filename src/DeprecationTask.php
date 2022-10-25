@@ -465,9 +465,10 @@ class DeprecationTask extends BuildTask
         if (!$from || $from === '5.0.0') {
             $from = '4.12.0';
         }
-        // if ($from === '4.0.0') {
-        //     $from = '4.0.1';
-        // }
+        // revert previous change to 4.0.1 as it's no longer required to use the 0.0.1
+        if ($from === '4.0.1') {
+            $from = '4.0.0';
+        }
         foreach (self::MAJOR_1_DIRS as $majorDir) {
             if (str_contains($this->currentPath, $majorDir)) {
                 $from = preg_replace('#^4\.#', '1.', $from);
