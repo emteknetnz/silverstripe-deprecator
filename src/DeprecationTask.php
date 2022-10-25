@@ -57,12 +57,12 @@ class DeprecationTask extends BuildTask
                     continue;
                 }
                 $dir = "$vendorDir/$subdir";
-                if ($dir != '/var/www/vendor/silverstripe/asset-admin') {
+                if ($dir != '/var/www/vendor/silverstripe/assets') {
                     continue;
                 }
                 /*
                 D admin
-                asset-admin
+                D asset-admin
                 assets
                 campaign-admin
                 config
@@ -465,9 +465,9 @@ class DeprecationTask extends BuildTask
         if (!$from || $from === '5.0.0') {
             $from = '4.12.0';
         }
-        if ($from === '4.0.0') {
-            $from = '4.0.1';
-        }
+        // if ($from === '4.0.0') {
+        //     $from = '4.0.1';
+        // }
         foreach (self::MAJOR_1_DIRS as $majorDir) {
             if (str_contains($this->currentPath, $majorDir)) {
                 $from = preg_replace('#^4\.#', '1.', $from);
