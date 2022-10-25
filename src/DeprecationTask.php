@@ -26,6 +26,17 @@ class DeprecationTask extends BuildTask
 
     private $updatedDirs = [];
 
+    private const MAJOR_1_DIRS = [
+        'silverstripe/admin',
+        'silverstripe/asset-admin',
+        'silverstripe/assets',
+        'silverstripe/campaign-admin',
+        'silverstripe/config',
+        'silverstripe/versioned',
+    ];
+
+    private $currentPath = '';
+
     public function run($request)
     {
         $vendorDirs = [
@@ -46,24 +57,16 @@ class DeprecationTask extends BuildTask
                     continue;
                 }
                 $dir = "$vendorDir/$subdir";
-                if ($dir != '/var/www/vendor/silverstripe/cms') {
+                if ($dir != '/var/www/vendor/silverstripe/asset-admin') {
                     continue;
                 }
                 /*
                 D admin
-                D asset-admin
-                W assets
-                D behat-extension
-                D campaign-admin
-                D cms
-                D config
-                D framework`
-                D recipe-plugin
-                D vendor-plugin
-                D versioned
-                D versioned-admin
-                D dnadesign/silverstripe-elemental
-                None symbiote/silvestripe-gridfieldextensions
+                asset-admin
+                assets
+                campaign-admin
+                config
+                versioned
                 */
                 foreach ([
                     'src',
@@ -85,6 +88,7 @@ class DeprecationTask extends BuildTask
 
     public function update(string $dir)
     {
+        $this->currentPath = $dir;
         $paths = explode("\n", shell_exec("find $dir | grep .php"));
         $paths = array_filter($paths, fn($f) => strtolower(pathinfo($f, PATHINFO_EXTENSION)) == 'php');
         foreach ($paths as $path) {
@@ -290,7 +294,7 @@ class DeprecationTask extends BuildTask
                     list (
                         $noticeFrom,
                         $messageFromNotice,
-                    ) = $this->extractFromMethodBody($methodBody, $docblockFrom, $messageFromNotice);
+                    ) = $this->extractFromMethodBody($methodBody);
                 }
                 if ($docblockHasDeprecated) {
                     list (
@@ -461,6 +465,11 @@ class DeprecationTask extends BuildTask
         }
         if ($from === '4.0.0') {
             $from = '4.0.1';
+        }
+        foreach (self::MAJOR_1_DIRS as $majorDir) {
+            if (str_contains($this->currentPath, $majorDir)) {
+                $from = preg_replace('#^4\.#', '1.', $from);
+            }
         }
         return $from;
     }
