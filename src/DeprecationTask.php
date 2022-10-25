@@ -71,6 +71,8 @@ class DeprecationTask extends BuildTask
                 foreach ([
                     'src',
                     'code',
+                    '_legacy',
+                    '_graphql',
                     // 'tests',
                     // 'thirdparty'
                 ] as $d) {
