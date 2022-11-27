@@ -24,6 +24,8 @@ class DeprecatedListTask extends BuildTask
 
     protected $description = 'List deprecations in Silverstripe CMS 4';
 
+    private $output = [];
+
     private $deprecatedSearchTerms = [];
 
     public function run($request)
@@ -46,9 +48,9 @@ class DeprecatedListTask extends BuildTask
                     continue;
                 }
                 $dir = "$vendorDir/$subdir";
-                if ($dir != '/var/www/vendor/silverstripe/assets') {
-                    continue;
-                }
+                // if ($dir != '/var/www/vendor/silverstripe/assets') {
+                //     continue;
+                // }
                 foreach ([
                     'src',
                     'code',
@@ -64,59 +66,121 @@ class DeprecatedListTask extends BuildTask
                 }
             }
         }
-        echo "Results:\n";
-        foreach ($this->deprecatedSearchTerms as $key => $searchTerms) {
-            echo "\n$key\n";
-            foreach ($searchTerms as $searchTerm) {
-                echo "$searchTerm\n";
+        // echo "Results:\n";
+        // foreach ($this->deprecatedSearchTerms as $key => $searchTerms) {
+        //     echo "\n$key\n";
+        //     foreach ($searchTerms as $searchTerm) {
+        //         echo "$searchTerm\n";
+        //     }
+        // }
+        // search for deprecated terms
+        foreach ($vendorDirs as $vendorDir) {
+            if (!file_exists($vendorDir)) {
+                continue;
+            }
+            foreach (scandir($vendorDir) as $subdir) {
+                if (in_array($subdir, ['.', '..'])) {
+                    continue;
+                }
+                $dir = "$vendorDir/$subdir";
+                if ($dir != '/var/www/vendor/silverstripe/assets') {
+                    continue;
+                }
+                foreach ([
+                    'src',
+                    'code',
+                    '_graphql',
+                    'tests',
+                ] as $d) {
+                    $subdir = "$dir/$d";
+                    if (file_exists($subdir)) {
+                        $this->stringSearchDeprecated($subdir);
+                    }
+                }
             }
         }
+        $path = BASE_PATH . '/output.txt';
+        file_put_contents($path, implode("\n", $this->output));
+        echo "Wrote to $path\n";
     }
 
     public function listDeprecated(string $dir)
     {
-        $this->currentPath = $dir;
         $paths = explode("\n", shell_exec("find $dir | grep .php"));
         $paths = array_filter($paths, fn($f) => strtolower(pathinfo($f, PATHINFO_EXTENSION)) == 'php');
         foreach ($paths as $path) {
             if (is_dir($path)) {
                 continue;
             }
-            if (!str_contains($path, 'File.php')) { continue; }
-            // these files have messed up indendation, do manually
-            if (strpos($path, 'SapphireTest.php') !== false || strpos($path, 'FunctionalTest.php') !== false) {
+            //
+            // if (!str_contains($path, 'File.php')) { continue; }
+            //
+            $code = file_get_contents($path);
+            if (strpos($code, "\nenum ") !== false) {
+                continue;
+            }
+            echo "Listing deprecated in $path\n";
+            $this->scan($code);
+        }
+    }
+
+    public function stringSearchDeprecated(string $dir)
+    {
+        $paths = explode("\n", shell_exec("find $dir | grep .php"));
+        $paths = array_filter($paths, fn($f) => strtolower(pathinfo($f, PATHINFO_EXTENSION)) == 'php');
+        foreach ($paths as $path) {
+            if (is_dir($path)) {
                 continue;
             }
             $code = file_get_contents($path);
             if (strpos($code, "\nenum ") !== false) {
                 continue;
             }
-            file_put_contents(BASE_PATH . '/out-01.php', $code);
-            $this->scan($code);
+            $matches = [];
+            echo "Search for deprecated stings in $path\n";
+            foreach ($this->deprecatedSearchTerms as $key => $searchTerms) {
+                foreach ($searchTerms as $searchTerm) {
+                    $lines = explode("\n", $code);
+                    foreach ($lines as $num => $line) {
+                        if (!str_contains($line, $searchTerm)) {
+                            continue;
+                        }
+                        $matches[] = "$num: " . str_replace($searchTerm, "**$searchTerm**", $line);
+                    }
+                }
+            }
+            if (empty($matches)) {
+                continue;
+            }
+            $this->output[] = "\n$path:";
+            foreach ($matches as $match) {
+                $this->output[] = "$match";
+            }
         }
     }
+
     private function scan(string $code): void
     {
         $ast = $this->getAst($code);
         $classes = $this->getClasses($ast);
         $classes = array_reverse($classes);
         foreach ($classes as $class) {
-            $this->scanDeprecated($class, 'class', "class " . $class->name->name);
+            $this->scanDeprecated($class, 'class', "class " . $class->name->name, $class);
             $configs = $this->getConfigs($class);
             foreach ($configs as $config) {
-                $this->scanDeprecated($config, 'config', $class->name->name . '.' . $config->props[0]->name->name);
+                $this->scanDeprecated($config, 'config', $class->name->name . '.' . $config->props[0]->name->name, $class);
             }
             $methods = $this->getMethods($class);
             foreach ($methods as $method) {
                 if ($method->name->name === '__construct') {
                     continue;
                 }
-                $this->scanDeprecated($method, 'method', $class->name->name . '::' . $method->name->name . '()');
+                $this->scanDeprecated($method, 'method', $class->name->name . '::' . $method->name->name . '()', $class);
             }
         }
     }
 
-    private function scanDeprecated(Node $node, string $type, string $key): void
+    private function scanDeprecated(Node $node, string $type, string $key, $class): void
     {
         $docComment = $node->getDocComment();
         if (!$docComment) {
@@ -143,7 +207,7 @@ class DeprecatedListTask extends BuildTask
                 /** @var ClassMethod $node */
                 $method = $node;
                 if ($method->isStatic()) {
-                    $this->deprecatedSearchTerms[$key][] = '::' . $name . '(';
+                    $this->deprecatedSearchTerms[$key][] = $class->name->name . '::' . $name . '(';
                 }
             }
         }
