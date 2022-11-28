@@ -33,7 +33,9 @@ class DeprecatedListTask extends BuildTask
         'Email::render()',
         'Member::logOut()',
         'Config_ForClass::update()',
-        'MemoryConfigCollection::update()'
+        'MemoryConfigCollection::update()',
+        'SSViewer_BasicIteratorSupport::First()',
+        'SSViewer_BasicIteratorSupport::Last()',
     ];
 
     private $output = [];
@@ -42,7 +44,14 @@ class DeprecatedListTask extends BuildTask
 
     public function run($request)
     {
-        if (!file_exists(BASE_PATH . "/_output")) {
+        if (file_exists(BASE_PATH . "/_output")) {
+            foreach (scandir(BASE_PATH . "/_output") as $txt) {
+                if ($txt == '.' || $txt == '..') {
+                    continue;
+                }
+                unlink(BASE_PATH . "/_output/$txt");
+            }
+        } else {
             mkdir(BASE_PATH . "/_output");
         }
         $vendorDirs = [
