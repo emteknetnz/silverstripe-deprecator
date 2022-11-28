@@ -2,7 +2,6 @@
 
 namespace emteknetnz\Deprecator;
 
-use Exception;
 use PhpParser\Error;
 use PhpParser\Lexer;
 use PhpParser\Node;
@@ -12,8 +11,6 @@ use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\If_;
 use PhpParser\Node\Stmt\Namespace_;
 use SilverStripe\Dev\BuildTask;
-use PhpParser\PrettyPrinter;
-use SilverStripe\Dev\Deprecation;
 use PhpParser\Node\Stmt\Property;
 
 class DeprecatedListTask extends BuildTask
@@ -24,12 +21,30 @@ class DeprecatedListTask extends BuildTask
 
     protected $description = 'List deprecations in Silverstripe CMS 4';
 
+    // things to ignore cos they clutter results
+    private const IGNORE_KEYS = [
+        'SearchQuery::filter()',
+        'SearchQuery::exclude()',
+        'SearchQuery::filter()',
+        'SearchQuery::limit()',
+        'SearchQuery::start()',
+        'SearchQuery_Range::start()',
+        'Email::debug()',
+        'Email::render()',
+        'Member::logOut()',
+        'Config_ForClass::update()',
+        'MemoryConfigCollection::update()'
+    ];
+
     private $output = [];
 
     private $deprecatedSearchTerms = [];
 
     public function run($request)
     {
+        if (!file_exists(BASE_PATH . "/_output")) {
+            mkdir(BASE_PATH . "/_output");
+        }
         $vendorDirs = [
             BASE_PATH . '/vendor/dnadesign',
             BASE_PATH . '/vendor/silverstripe',
@@ -66,13 +81,6 @@ class DeprecatedListTask extends BuildTask
                 }
             }
         }
-        // echo "Results:\n";
-        // foreach ($this->deprecatedSearchTerms as $key => $searchTerms) {
-        //     echo "\n$key\n";
-        //     foreach ($searchTerms as $searchTerm) {
-        //         echo "$searchTerm\n";
-        //     }
-        // }
         // search for deprecated terms
         foreach ($vendorDirs as $vendorDir) {
             if (!file_exists($vendorDir)) {
@@ -82,10 +90,8 @@ class DeprecatedListTask extends BuildTask
                 if (in_array($subdir, ['.', '..'])) {
                     continue;
                 }
+                $this->output = [];
                 $dir = "$vendorDir/$subdir";
-                if ($dir != '/var/www/vendor/silverstripe/assets') {
-                    continue;
-                }
                 foreach ([
                     'src',
                     'code',
@@ -97,11 +103,15 @@ class DeprecatedListTask extends BuildTask
                         $this->stringSearchDeprecated($subdir);
                     }
                 }
+                if (empty($this->output)) {
+                    continue;
+                }
+                $s = str_replace('/', '-', str_replace('/var/www/vendor/', '', $dir));
+                $path = BASE_PATH . "/_output/$s.txt";
+                file_put_contents($path, implode("\n", $this->output));
+                echo "Wrote to $path\n";
             }
         }
-        $path = BASE_PATH . '/output.txt';
-        file_put_contents($path, implode("\n", $this->output));
-        echo "Wrote to $path\n";
     }
 
     public function listDeprecated(string $dir)
@@ -142,17 +152,21 @@ class DeprecatedListTask extends BuildTask
                 foreach ($searchTerms as $searchTerm) {
                     $lines = explode("\n", $code);
                     foreach ($lines as $num => $line) {
+                        // offset num to account for <?php
+                        $num++;
                         if (!str_contains($line, $searchTerm)) {
                             continue;
                         }
-                        $matches[] = "$num: " . str_replace($searchTerm, "**$searchTerm**", $line);
+                        $matches[] = '';
+                        $matches[] = "\"$key\"";
+                        $matches[] = "$num: $line";
                     }
                 }
             }
             if (empty($matches)) {
                 continue;
             }
-            $this->output[] = "\n$path:";
+            $this->output[] = "\n\n## $path:";
             foreach ($matches as $match) {
                 $this->output[] = "$match";
             }
@@ -182,6 +196,9 @@ class DeprecatedListTask extends BuildTask
 
     private function scanDeprecated(Node $node, string $type, string $key, $class): void
     {
+        if (in_array($key, self::IGNORE_KEYS)) {
+            return;
+        }
         $docComment = $node->getDocComment();
         if (!$docComment) {
             return;
