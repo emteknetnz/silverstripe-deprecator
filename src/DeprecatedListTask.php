@@ -30,6 +30,7 @@ class DeprecatedListTask extends BuildTask
         'SearchQuery::start()',
         'SearchQuery::page()',
         'SearchQuery_Range::start()',
+        'SearchQuery_Range::end()',
         'Email::debug()',
         'Email::render()',
         'Member::logOut()',
@@ -38,6 +39,9 @@ class DeprecatedListTask extends BuildTask
         'MemoryConfigCollection::update()',
         'SSViewer_BasicIteratorSupport::First()',
         'SSViewer_BasicIteratorSupport::Last()',
+        'Comment::getParent()',
+        'class Handler',
+        'SiteTreeFileFormFactoryExtension::updateFormFields()',
     ];
 
     private $output = [];
