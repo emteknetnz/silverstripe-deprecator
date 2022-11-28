@@ -28,6 +28,7 @@ class DeprecatedListTask extends BuildTask
         'SearchQuery::filter()',
         'SearchQuery::limit()',
         'SearchQuery::start()',
+        'SearchQuery::page()',
         'SearchQuery_Range::start()',
         'Email::debug()',
         'Email::render()',
@@ -63,6 +64,7 @@ class DeprecatedListTask extends BuildTask
             BASE_PATH . '/vendor/cwp',
             // BASE_PATH . '/vendor/tractorcow',
         ];
+        // list @deprecated classes/config/methods
         foreach ($vendorDirs as $vendorDir) {
             if (!file_exists($vendorDir)) {
                 continue;
@@ -78,7 +80,7 @@ class DeprecatedListTask extends BuildTask
                 foreach ([
                     'src',
                     'code',
-                    '_legacy',
+                    // '_legacy', // don't list this, graphql3 has already been taken care of
                     '_graphql',
                     // 'tests',
                     // 'thirdparty'
