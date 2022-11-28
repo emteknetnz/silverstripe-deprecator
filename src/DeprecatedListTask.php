@@ -33,6 +33,7 @@ class DeprecatedListTask extends BuildTask
         'Email::debug()',
         'Email::render()',
         'Member::logOut()',
+        'Member::currentUser()',
         'Config_ForClass::update()',
         'MemoryConfigCollection::update()',
         'SSViewer_BasicIteratorSupport::First()',
