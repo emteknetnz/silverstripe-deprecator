@@ -13,11 +13,11 @@ use SilverStripe\Dev\BuildTask;
 use PhpParser\PrettyPrinter;
 use SilverStripe\Dev\Deprecation;
 
-class DeprecationDiffTalk extends BuildTask
+class DeprecationDiffTask extends BuildTask
 {
-    private static $segment = 'DeprecationDiffTalk';
+    private static $segment = 'DeprecationDiffTask';
 
-    protected $title = 'DeprecationDiffTalk';
+    protected $title = 'DeprecationDiffTask';
 
     protected $description = 'Create a diff between CMS 4 and CMS 5 for the changelog';
 
@@ -73,6 +73,9 @@ class DeprecationDiffTalk extends BuildTask
     public function diff(string $dir)
     {
         $this->currentPath = $dir;
+        $branch = shell_exec('git branch');
+        var_dump($branch);
+        return;
         $paths = explode("\n", shell_exec("find $dir | grep .php"));
         $paths = array_filter($paths, fn($f) => strtolower(pathinfo($f, PATHINFO_EXTENSION)) == 'php');
         foreach ($paths as $path) {
