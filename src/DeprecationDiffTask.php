@@ -44,6 +44,7 @@ class DeprecationDiffTask extends BuildTask
         } else {
             mkdir(BASE_PATH . "/_output");
         }
+        file_put_contents(BASE_PATH . "/_output/_log.txt", '');
         $vendorDirs = [
             BASE_PATH . '/vendor/dnadesign',
             BASE_PATH . '/vendor/silverstripe',
@@ -63,7 +64,7 @@ class DeprecationDiffTask extends BuildTask
                 }
                 $dir = "$vendorDir/$subdir";
                 if ($dir != '/var/www/vendor/silverstripe/assets') {
-                    continue;
+                    //continue;
                 }
                 foreach ([
                     'src',
@@ -183,6 +184,12 @@ class DeprecationDiffTask extends BuildTask
         echo "Wrote to $f\n";
     }
 
+    private function log($s)
+    {
+        $f = BASE_PATH . "/_output/_log.txt";
+        file_put_contents($f, file_get_contents($f) . $s . "\n");
+    }
+
     public function diff(string $dir)
     {
         $this->currentPath = $dir;
@@ -199,13 +206,22 @@ class DeprecationDiffTask extends BuildTask
         );
         sort($branches);
         $branches = array_reverse($branches);
+        if (count($branches) < 2) {
+            $this->log("WARNING: Only 1 branch found for $dir");
+            return;
+        }
         $cms4Branch = $branches[1];
         $cms5Branch = $branches[0];
         foreach ([$cms5Branch, $cms4Branch] as $branch) {
             shell_exec("cd $dir && git checkout $branch");
             $cms = $branch == $cms4Branch ? 'cms4' : 'cms5';
             // do cms 5 branch first so we checkout back to original cms 4 branch
-            $paths = explode("\n", shell_exec("find $dir | grep .php"));
+            $res = shell_exec("find $dir | grep .php");
+            if (!$res) {
+                $this->log("INFO: No php files found for $branch in $dir, continuing");
+                continue;
+            }
+            $paths = explode("\n", $res);
             $paths = array_filter($paths, fn($f) => strtolower(pathinfo($f, PATHINFO_EXTENSION)) == 'php');
             foreach ($paths as $path) {
                 $this->cTest();
