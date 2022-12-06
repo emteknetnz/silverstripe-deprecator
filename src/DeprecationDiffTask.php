@@ -76,17 +76,89 @@ class DeprecationDiffTask extends BuildTask
         $finfo = $this->fileinfo;
         $addedInCms5 = [];
         $removedInCms5 = [];
+        $deprecatedInCms4 = [];
+        $deprecatedInCms5 = [];
         foreach (array_keys($finfo) as $path) {
-            if (!isset($finfo[$path]['cms4'])) {
-                $removedInCms5[] = [
-                    'type' => 'class',
+            $f = $finfo[$path];
+            // classes
+            if (!isset($f['cms4'])) {
+                $addedInCms5[] = [
                     'path' => $path,
-                    'name' => $finfo[$path]['cms4']['namespace'] . '\\' . $finfo[$path]['cms4']['class']
+                    'type' => $f['cms5']['type'],
+                    'name' => $f['cms5']['namespace'] . '\\' . $f['cms5']['name']
                 ];
+            } elseif (!isset($f['cms5'])) {
+                $removedInCms5[] = [
+                    'path' => $path,
+                    'type' => $f['cms4']['type'],
+                    'name' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
+                    'dep4' => $f['cms4']['deprecated'] ? 'true' : 'false'
+                ];
+            } else { // both classes exist
+                foreach (['cms4', 'cms5'] as $cms) {
+                    if ($f[$cms]['deprecated']) {
+                        $a = [
+                            'type' => $f[$cms]['type'],
+                            'name' => $f[$cms]['namespace'] . '\\' . $f[$cms]['name'],
+                            'path' => $path,
+                        ];
+                        if ($cms == 'cms4') {
+                            $deprecatedInCms4[] = $a;
+                        } else {
+                            $deprecatedInCms5[] = $a;
+                        }
+                    }
+                }
+            }
+            foreach (['methods', 'config', 'properties'] as $k) {
+                $type = $k == 'methods' ? 'method' : ($k == 'properties' ? 'property' : 'config');
+                foreach ($f['cms4'][$k] as $name => $deprecated) {
+                    if (!isset($f['cms5'][$k][$name])) {
+                        $removedInCms5[] = [
+                            'type' => $type,
+                            'name' => $name,
+                            'class' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
+                            'path' => $path,
+                            'dep4' => $deprecated ? 'true' : 'false'
+                        ];
+                    } else { // both exist
+                        if ($deprecated) {
+                            $a = [
+                                'type' => $type,
+                                'name' => $name,
+                                'class' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
+                                'path' => $path,
+                            ];
+                            $deprecatedInCms4[] = $a;
+                            if ($f['cms5'][$k][$name]) {
+                                $deprecatedInCms5[] = $a;
+                            }
+                        }
+                    }
+                }
+                foreach ($f['cms5'][$k] as $name => $deprecated) {
+                    if (!isset($f['cms4'][$k][$name])) {
+                        $addedInCms5[] = [
+                            'type' => $type,
+                            'name' => $name,
+                            'class' => $f['cms5']['namespace'] . '\\' . $f['cms5']['name'],
+                            'path' => $path,
+                        ];
+                    }
+                }
             }
         }
         $deprecatedInBothCms4AndCms5 = [];
-        print_r($fileinfo);die;
+        foreach ($deprecatedInCms4 as $a) {
+            if (in_array($a, $deprecatedInCms5)) {
+                $deprecatedInBothCms4AndCms5[] = $a;
+            }
+        }
+        print_r([
+            'addedInCms5' => $addedInCms5,
+            'removedInCms5' => $removedInCms5,
+            'deprecatedInBothCms4AndCms5' => $deprecatedInBothCms4AndCms5,
+        ]);
     }
 
     public function diff(string $dir)
@@ -122,15 +194,18 @@ class DeprecationDiffTask extends BuildTask
                 if (strpos($code, "\nenum ") !== false) {
                     continue;
                 }
-                $this->fileinfo[$path] = [];
-                $this->fileinfo[$path][$cms] = [
-                    'namespace' => '',
-                    'class' => '',
-                    'deprecated' => false,
-                    'config' => [],
-                    'properties' => [],
-                    'methods' => []
-                ];
+                $this->fileinfo[$path] ??= [];
+                foreach (['cms4', 'cms5'] as $c) {
+                    $this->fileinfo[$path][$c] ??= [
+                        'namespace' => '',
+                        'type' => '',
+                        'name' => '',
+                        'deprecated' => false,
+                        'config' => [],
+                        'properties' => [],
+                        'methods' => []
+                    ];
+                }
                 $this->extract($code, $this->fileinfo[$path][$cms]);
             }
         }
@@ -139,23 +214,25 @@ class DeprecationDiffTask extends BuildTask
     private function extract(string $code, &$finfo): string
     {
         $ast = $this->getAst($code);
-        $finfo['namespace'] = $this->getNamespace($ast)->name->toString();
+        $namespace = $this->getNamespace($ast);
+        $finfo['namespace'] = $namespace ? $namespace->name->toString() : '';
         $classes = $this->getClasses($ast);
         // if multiple classes in file, just use the first one (SapphireTest phpunit 9)
         if (count($classes) > 1) {
             $classes = [$classes[0]];
         }
         foreach ($classes as $class) {
-            $finfo['class'] = $class->name->name;
+            $finfo['type'] = $class instanceof Class_ ? 'class' : 'trait';
+            $finfo['name'] = $class->name->name;
             $finfo['deprecated'] = $this->docBlockContainsDeprecated($class);
             foreach ($this->getMethods($class) as $method) {
                 $finfo['methods'][$method->name->name] = $this->docBlockContainsDeprecated($method);
             }
             foreach ($this->getConfigs($class) as $config) {
-                $finfo['config'][$config->name->name] = $this->docBlockContainsDeprecated($config);
+                $finfo['config'][$config->props[0]->name->name] = $this->docBlockContainsDeprecated($config);
             }
             foreach ($this->getProperties($class) as $property) {
-                $finfo['properties'][$property->name->name] = $this->docBlockContainsDeprecated($property);
+                $finfo['properties'][$property->props[0]->name->name] = $this->docBlockContainsDeprecated($property);
             }
         }
         return $code;
@@ -208,7 +285,7 @@ class DeprecationDiffTask extends BuildTask
             $class->stmts, function ($v) {
                 /** @var Property $p */
                 $p = $v;
-                return $p instanceof Property && $p->isPrivate() && $p->isStatic();
+                return ($p instanceof Property) && $p->isPrivate() && $p->isStatic();
             }
         );
     }
@@ -220,7 +297,7 @@ class DeprecationDiffTask extends BuildTask
             $class->stmts, function ($v) {
                 /** @var Property $p */
                 $p = $v;
-                return $p instanceof Property && !$p->isPrivate();
+                return ($p instanceof Property) && !$p->isPrivate();
             }
         );
     }
@@ -228,7 +305,7 @@ class DeprecationDiffTask extends BuildTask
     // only public + protected methods
     private function getMethods(Class_|Trait_ $class): array
     {
-        return array_filter($class->stmts, fn($v) => $v instanceof ClassMethod && !$v->isPrivate());
+        return array_filter($class->stmts, fn($v) => ($v instanceof ClassMethod) && !$v->isPrivate());
     }
 
     private function getAst(string $code): array
