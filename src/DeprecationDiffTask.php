@@ -34,13 +34,23 @@ class DeprecationDiffTask extends BuildTask
 
     public function run($request)
     {
+        if (file_exists(BASE_PATH . "/_output")) {
+            foreach (scandir(BASE_PATH . "/_output") as $txt) {
+                if ($txt == '.' || $txt == '..') {
+                    continue;
+                }
+                unlink(BASE_PATH . "/_output/$txt");
+            }
+        } else {
+            mkdir(BASE_PATH . "/_output");
+        }
         $vendorDirs = [
             BASE_PATH . '/vendor/dnadesign',
             BASE_PATH . '/vendor/silverstripe',
             BASE_PATH . '/vendor/symbiote',
             // BASE_PATH . '/vendor/bringyourownideas',
             // BASE_PATH . '/vendor/colymba',
-            // BASE_PATH . '/vendor/cwp',
+            BASE_PATH . '/vendor/cwp',
             // BASE_PATH . '/vendor/tractorcow',
         ];
         foreach ($vendorDirs as $vendorDir) {
@@ -68,8 +78,14 @@ class DeprecationDiffTask extends BuildTask
                         $this->diff($subdir);
                     }
                 }
+                $this->output($dir);
+                $this->fileinfo = [];
             }
         }
+    }
+
+    public function output(string $dir)
+    {
         // added in cms5
         // removed from cms5
         // deprecated in both cms4 + cms5 (i.e. not removed)
@@ -154,11 +170,17 @@ class DeprecationDiffTask extends BuildTask
                 $deprecatedInBothCms4AndCms5[] = $a;
             }
         }
+        $iden = str_replace('/', '-', str_replace('/var/www/vendor/', '', $dir));
+        ob_start();
         print_r([
             'addedInCms5' => $addedInCms5,
             'removedInCms5' => $removedInCms5,
             'deprecatedInBothCms4AndCms5' => $deprecatedInBothCms4AndCms5,
         ]);
+        $s = ob_get_clean();
+        $f = BASE_PATH . '/_output/' . $iden . '.txt';
+        file_put_contents($f, $s);
+        echo "Wrote to $f\n";
     }
 
     public function diff(string $dir)
