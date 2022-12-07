@@ -220,6 +220,10 @@ class DeprecationDiffTask extends BuildTask
         $cms4Branch = $branches[1];
         $cms5Branch = $branches[0];
         foreach ([$cms5Branch, $cms4Branch] as $branch) {
+            if (!file_exists($dir)) {
+                $this->log("WARNING: dir does not exist $dir");
+                continue;
+            }
             shell_exec("cd $dir && git checkout $branch");
             $cms = $branch == $cms4Branch ? 'cms4' : 'cms5';
             // do cms 5 branch first so we checkout back to original cms 4 branch
