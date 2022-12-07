@@ -171,12 +171,19 @@ class DeprecationDiffTask extends BuildTask
                 $deprecatedInBothCms4AndCms5[] = $a;
             }
         }
+        $removedInCms5ButNotDeprecatedInCms4 = [];
+        foreach ($removedInCms5 as $a) {
+            if (!in_array($a, $deprecatedInCms4)) {
+                $removedInCms5ButNotDeprecatedInCms4[] = $a;
+            }
+        }
         $iden = str_replace('/', '-', str_replace('/var/www/vendor/', '', $dir));
         ob_start();
         print_r([
             'addedInCms5' => $addedInCms5,
             'removedInCms5' => $removedInCms5,
             'deprecatedInBothCms4AndCms5' => $deprecatedInBothCms4AndCms5,
+            'removedInCms5ButNotDeprecatedInCms4' => $removedInCms5ButNotDeprecatedInCms4,
         ]);
         $s = ob_get_clean();
         $f = BASE_PATH . '/_output/' . $iden . '.txt';
