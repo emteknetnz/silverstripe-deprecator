@@ -63,8 +63,8 @@ class DeprecationDiffTask extends BuildTask
                     continue;
                 }
                 $dir = "$vendorDir/$subdir";
-                if ($dir != '/var/www/vendor/silverstripe/assets') {
-                    //continue;
+                if ($dir != '/var/www/vendor/cwp/cwp-core') {
+                    continue;
                 }
                 foreach ([
                     'src',
@@ -98,64 +98,68 @@ class DeprecationDiffTask extends BuildTask
         foreach (array_keys($finfo) as $path) {
             $f = $finfo[$path];
             // classes
+            $key = $path;
             if (!isset($f['cms4'])) {
-                $addedInCms5[] = [
+                $addedInCms5[$key] = [
                     'path' => $path,
                     'type' => $f['cms5']['type'],
                     'name' => $f['cms5']['namespace'] . '\\' . $f['cms5']['name']
                 ];
-            } elseif (!isset($f['cms5'])) {
-                $removedInCms5[] = [
+            } elseif (($f['cms5']['type'] ?? '') == '') {
+                $removedInCms5[$key] = [
                     'path' => $path,
                     'type' => $f['cms4']['type'],
                     'name' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
                     'dep4' => $f['cms4']['deprecated'] ? 'true' : 'false'
                 ];
-            } else { // both classes exist
-                foreach (['cms4', 'cms5'] as $cms) {
-                    if ($f[$cms]['deprecated']) {
-                        $a = [
-                            'type' => $f[$cms]['type'],
-                            'name' => $f[$cms]['namespace'] . '\\' . $f[$cms]['name'],
-                            'path' => $path,
-                        ];
-                        if ($cms == 'cms4') {
-                            $deprecatedInCms4[] = $a;
-                        } else {
-                            $deprecatedInCms5[] = $a;
-                        }
-                    }
-                }
+            }
+            if ($f['cms4']['deprecated']) {
+                $deprecatedInCms4[$key] = [
+                    'type' => $f['cms4']['type'],
+                    'name' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
+                    'path' => $path,
+                ];
+            }
+            if ($f['cms5']['deprecated']) {
+                $deprecatedInCms5[$key] = [
+                    'type' => $f['cms5']['type'],
+                    'name' => $f['cms5']['namespace'] . '\\' . $f['cms5']['name'],
+                    'path' => $path,
+                ];
             }
             foreach (['methods', 'config', 'properties'] as $k) {
                 $type = $k == 'methods' ? 'method' : ($k == 'properties' ? 'property' : 'config');
-                foreach ($f['cms4'][$k] as $name => $deprecated) {
-                    if (!isset($f['cms5'][$k][$name])) {
-                        $removedInCms5[] = [
+                foreach (array_keys($f['cms4'][$k]) as $name) {
+                    $key = "$path--$type-$name";
+                    if ($f['cms4'][$k][$name]['deprecated'] ?? false) {
+                        $deprecatedInCms4[$key] = [
                             'type' => $type,
                             'name' => $name,
                             'class' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
                             'path' => $path,
-                            'dep4' => $deprecated ? 'true' : 'false'
                         ];
-                    } else { // both exist
-                        if ($deprecated) {
-                            $a = [
-                                'type' => $type,
-                                'name' => $name,
-                                'class' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
-                                'path' => $path,
-                            ];
-                            $deprecatedInCms4[] = $a;
-                            if ($f['cms5'][$k][$name]) {
-                                $deprecatedInCms5[] = $a;
-                            }
-                        }
+                    }
+                    if ($f['cms5'][$k][$name]['deprecated'] ?? false) {
+                        $deprecatedInCms5[$key] = [
+                            'type' => $type,
+                            'name' => $name,
+                            'class' => $f['cms4']['namespace'] . '\\' . $f['cms5']['name'],
+                            'path' => $path,
+                        ];
+                    }
+                    if (!isset($f['cms5'][$k][$name])) {
+                        $removedInCms5[$key] = [
+                            'type' => $type,
+                            'name' => $name,
+                            'class' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
+                            'path' => $path
+                        ];
                     }
                 }
-                foreach ($f['cms5'][$k] as $name => $deprecated) {
+                foreach (array_keys($f['cms5'][$k]) as $name) {
+                    $key = "$path--$type-$name";
                     if (!isset($f['cms4'][$k][$name])) {
-                        $addedInCms5[] = [
+                        $addedInCms5[$key] = [
                             'type' => $type,
                             'name' => $name,
                             'class' => $f['cms5']['namespace'] . '\\' . $f['cms5']['name'],
@@ -166,24 +170,49 @@ class DeprecationDiffTask extends BuildTask
             }
         }
         $deprecatedInBothCms4AndCms5 = [];
-        foreach ($deprecatedInCms4 as $a) {
-            if (in_array($a, $deprecatedInCms5)) {
-                $deprecatedInBothCms4AndCms5[] = $a;
+        foreach ($deprecatedInCms4 as $key => $a) {
+            if (isset($deprecatedInCms5[$key])) {
+                $deprecatedInBothCms4AndCms5[$key] = $a;
             }
         }
-        $removedInCms5ButNotDeprecatedInCms4 = [];
-        foreach ($removedInCms5 as $a) {
-            if (!in_array($a, $deprecatedInCms4)) {
-                $removedInCms5ButNotDeprecatedInCms4[] = $a;
+        // filter out deprecated/removed methods where entire class was deprecated/removed
+        // this is getting it closer to a "useful output"
+        $cleanThing = function($a, $b = []) {
+            $na = [];
+            foreach (array_keys($a) as $key) {
+                // always retain classes
+                if (strpos($key, '--') === false) {
+                    $na[$key] = $a[$key];
+                    continue;
+                }
+                // keep methods/properties/config where the class wasn't itself deprecated/removed
+                $classKey = explode('--', $key)[0];
+                if (!isset($a[$classKey]) && !isset($b[$classKey])) {
+                    $na[$key] = $a[$key];
+                }
             }
-        }
+            return $na;
+        };
+        //
         $iden = str_replace('/', '-', str_replace('/var/www/vendor/', '', $dir));
         ob_start();
+        echo "\n\nRAW DATA\n\n";
         print_r([
             'addedInCms5' => $addedInCms5,
-            'removedInCms5' => $removedInCms5,
+            'removedInCms5' => $cleanThing($removedInCms5),
+            'deprecatedInCms4' => $deprecatedInCms4,
+            'deprecatedInCms5' => $deprecatedInCms5,
             'deprecatedInBothCms4AndCms5' => $deprecatedInBothCms4AndCms5,
-            'removedInCms5ButNotDeprecatedInCms4' => $removedInCms5ButNotDeprecatedInCms4,
+        ]);
+        echo "\n\nTO ACTION\n\n";
+        $removedInCms5ButNotDeprecatedInCms4 = [];
+        foreach ($removedInCms5 as $key => $a) {
+            if (!isset($deprecatedInCms4[$key])) {
+                $removedInCms5ButNotDeprecatedInCms4[$key] = $a;
+            }
+        }
+        print_r([
+            'removedInCms5ButNotDeprecatedInCms4' => $cleanThing($removedInCms5ButNotDeprecatedInCms4, $deprecatedInCms4),
         ]);
         $s = ob_get_clean();
         $f = BASE_PATH . '/_output/' . $iden . '.txt';
