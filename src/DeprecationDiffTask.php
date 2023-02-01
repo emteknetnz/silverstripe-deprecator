@@ -185,7 +185,7 @@ class DeprecationDiffTask extends BuildTask
             $na = [];
             foreach (array_keys($a) as $key) {
                 // remove constants.php
-                if (preg_match('#/[a-z0-9\-\.]+#', $key)) {
+                if (preg_match('#/[a-z0-9\-\.]+$#', $key)) {
                     continue;
                 }
                 // always retain classes
