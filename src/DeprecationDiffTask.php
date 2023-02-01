@@ -13,6 +13,9 @@ use PhpParser\Node\Stmt\Namespace_;
 use PhpParser\Node\Stmt\Property;
 use PhpParser\Node\Stmt\Trait_;
 use SilverStripe\Dev\BuildTask;
+use PhpParser\Node\Param;
+use PhpParser\Node\Stmt\Use_;
+use PhpParser\Node\UnionType;
 
 class DeprecationDiffTask extends BuildTask
 {
@@ -32,6 +35,26 @@ class DeprecationDiffTask extends BuildTask
     private $currentPath = '';
 
     private $changelog = [];
+
+    // hardcoded list of silverstripe/framework Email.php methods that no longer exists
+    // on Email.php, are instead defined on parent class in symfony/email and have a different
+    // param and/or return type signature
+    private $frameworkEmailMethods = [
+        'getFrom',
+        'addFrom',
+        'getSender',
+        'getReturnPath',
+        'getTo',
+        'addTo',
+        'getCC',
+        'addCC',
+        'getBCC',
+        'addBCC',
+        'getReplyTo',
+        'addReplyTo',
+        'getSubject',
+        'getPriority'
+    ];
 
     public function run($request)
     {
@@ -64,8 +87,8 @@ class DeprecationDiffTask extends BuildTask
                     continue;
                 }
                 $dir = "$vendorDir/$subdir";
-                if ($dir != '/var/www/vendor/silverstripe/config') {
-                    // continue;
+                if ($dir != '/var/www/vendor/silverstripe/framework') {
+                    continue;
                 }
                 foreach ([
                     'src',
@@ -114,7 +137,6 @@ class DeprecationDiffTask extends BuildTask
                     'path' => $path,
                     'type' => $f['cms4']['type'],
                     'name' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
-                    'dep4' => $f['cms4']['deprecated'] ? 'true' : 'false'
                 ];
             }
             if ($f['cms4']['deprecated']) {
@@ -135,7 +157,7 @@ class DeprecationDiffTask extends BuildTask
                 $type = $k == 'methods' ? 'method' : ($k == 'properties' ? 'property' : 'config');
                 foreach (array_keys($f['cms4'][$k]) as $name) {
                     $key = "$path--$type-$name";
-                    if ($f['cms4'][$k][$name] ?? false) {
+                    if ($f['cms4'][$k][$name]['deprecated'] ?? false) {
                         $deprecatedInCms4[$key] = [
                             'type' => $type,
                             'name' => $name,
@@ -143,7 +165,7 @@ class DeprecationDiffTask extends BuildTask
                             'path' => $path,
                         ];
                     }
-                    if ($f['cms5'][$k][$name] ?? false) {
+                    if ($f['cms5'][$k][$name]['deprecated'] ?? false) {
                         $deprecatedInCms5[$key] = [
                             'type' => $type,
                             'name' => $name,
@@ -152,7 +174,7 @@ class DeprecationDiffTask extends BuildTask
                         ];
                     }
                     if (!isset($f['cms5'][$k][$name])) {
-                        $removedInCms5[$key] = [
+                        $removedInCms5[$key]['deprecated'] = [
                             'type' => $type,
                             'name' => $name,
                             'class' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
@@ -207,9 +229,13 @@ class DeprecationDiffTask extends BuildTask
         echo "\n\nTO ACTION\n\n";
         $removedInCms5ButNotDeprecatedInCms4 = [];
         foreach ($removedInCms5 as $key => $a) {
-            if (!isset($deprecatedInCms4[$key])) {
-                $removedInCms5ButNotDeprecatedInCms4[$key] = $a;
+            if (isset($deprecatedInCms4[$key])) {
+                continue;
             }
+            if ($this->isFrameworkEmailMethod($key)) {
+                continue;
+            }
+            $removedInCms5ButNotDeprecatedInCms4[$key] = $a;
         }
         print_r([
             'Removed in CMS 5 but not deprecated in CMS 4' => $cleanThing($removedInCms5ButNotDeprecatedInCms4, $deprecatedInCms4)
@@ -244,7 +270,11 @@ class DeprecationDiffTask extends BuildTask
                 if (isset($removedInCms5[$classKey])) {
                     continue;
                 }
-                $depr[] = "- Removed deprecated method `{$a['class']}::{$a['name']}()`";
+                if ($this->isFrameworkEmailMethod($key)) {
+                    $depr[] = "- Method `{$a['class']}::{$a['name']}() is now defined in Symfony\Component\Mime\Email.php with a different method signature`";
+                } else {
+                    $depr[] = "- Removed deprecated method `{$a['class']}::{$a['name']}()`";
+                }
             }
         }
         if (!empty($depr)) {
@@ -255,6 +285,19 @@ class DeprecationDiffTask extends BuildTask
                 $this->changelog[] = $line;
             }
         }
+    }
+
+    private function isFrameworkEmailMethod($key)
+    {
+        if (str_contains($key, '/Email/Email.php')) {
+            if (str_contains($key, '--')) {
+                $method = explode('-', explode('--', $key)[1])[1];
+                if (in_array($method, $this->frameworkEmailMethods)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private function getComposerName($dir)
@@ -334,7 +377,13 @@ class DeprecationDiffTask extends BuildTask
     private function extract(string $code, &$finfo): string
     {
         $ast = $this->getAst($code);
+        $useStatements = $this->getUseStatements($ast);
+        $imports = array_combine(
+            array_map(fn(Use_ $use) => end($use->uses[0]->name->parts), $useStatements),
+            array_map(fn(Use_ $use) => (string) $use->uses[0]->name, $useStatements),
+        );
         $namespace = $this->getNamespace($ast);
+        $ns = (string) $namespace->name;
         $finfo['namespace'] = $namespace ? $namespace->name->toString() : '';
         $classes = $this->getClasses($ast);
         // if multiple classes in file, just use the first one (SapphireTest phpunit 9)
@@ -346,16 +395,72 @@ class DeprecationDiffTask extends BuildTask
             $finfo['name'] = $class->name->name;
             $finfo['deprecated'] = $this->docBlockContainsDeprecated($class);
             foreach ($this->getMethods($class) as $method) {
-                $finfo['methods'][$method->name->name] = $this->docBlockContainsDeprecated($method);
+                $finfo['methods'][$method->name->name] = [
+                    'deprecated' => $this->docBlockContainsDeprecated($method),
+                    'params' => $this->getParamsData($imports, $ns, $method), // ['name' => $name, 'type' => $type]
+                    'returnType' => $this->getReturnType($imports, $ns, $method)
+                ];
+                print_r($finfo['methods'][$method->name->name]);
             }
             foreach ($this->getConfigs($class) as $config) {
-                $finfo['config'][$config->props[0]->name->name] = $this->docBlockContainsDeprecated($config);
+                $finfo['config'][$config->props[0]->name->name] = [
+                    'deprecated' => $this->docBlockContainsDeprecated($config)
+                ];
             }
             foreach ($this->getProperties($class) as $property) {
-                $finfo['properties'][$property->props[0]->name->name] = $this->docBlockContainsDeprecated($property);
+                $finfo['properties'][$property->props[0]->name->name] = [
+                    'deprecated' => $this->docBlockContainsDeprecated($property)
+                ];
             }
         }
         return $code;
+    }
+
+    private function getParamsData(array $imports, string $ns, ClassMethod $method)
+    {
+        return array_map(
+            function (Param $param) use ($imports, $ns) {
+                $types = [$param->type];
+                if ($param->type instanceof UnionType) {
+                    $types = $param->type->types;
+                }
+                return [
+                    'name' => $param->var->name,
+                    'type' => $this->formatTypes($types, $imports, $ns),
+                ];
+            },
+            $method->getParams()
+        );
+    }
+
+    private function getReturnType(array $imports, string $ns, ClassMethod $method): string
+    {
+        $returnType = $method->getReturnType();
+        $types = [$returnType];
+        if ($returnType instanceof UnionType) {
+            $types = $returnType->types;
+        }
+        return $this->formatTypes($types, $imports, $ns);
+    }
+
+    private function formatTypes(array $types, array $imports, string $ns): string
+    {
+        $tys = [];
+        foreach ($types as $type) {
+            $cn = (string) $type;
+            if (is_null($type)) {
+                $tys[] = 'null';
+            } elseif (strtolower($cn) == $cn) {
+                $tys[] = $cn;
+            } elseif (class_exists($cn) || interface_exists($cn) || trait_exists($cn)) {
+                $tys[] = $cn;
+            } elseif (isset($imports[$cn])) {
+                $tys[] = $imports[$cn];
+            } else {
+                $tys[] = "$ns\\$cn";
+            }
+        }
+        return implode('|', $tys);
     }
 
     private function docBlockContainsDeprecated($node)
@@ -379,6 +484,14 @@ class DeprecationDiffTask extends BuildTask
     private function getNamespace(array $ast): ?Namespace_
     {
         return ($ast[0] ?? null) instanceof Namespace_ ? $ast[0] : null;
+    }
+
+    private function getUseStatements(array $ast): array
+    {
+        $ret = [];
+        $a = ($ast[0] ?? null) instanceof Namespace_ ? $ast[0]->stmts : $ast;
+        return array_merge($ret, array_filter($a, fn($v) => $v instanceof Use_));
+        return $ret;
     }
 
     // + traits
