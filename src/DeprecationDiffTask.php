@@ -64,7 +64,7 @@ class DeprecationDiffTask extends BuildTask
                     continue;
                 }
                 $dir = "$vendorDir/$subdir";
-                if ($dir != '/var/www/vendor/silverstripe/mfa') {
+                if ($dir != '/var/www/vendor/silverstripe/config') {
                     // continue;
                 }
                 foreach ([
@@ -184,6 +184,10 @@ class DeprecationDiffTask extends BuildTask
         $cleanThing = function($a, $b = []) {
             $na = [];
             foreach (array_keys($a) as $key) {
+                // remove constants.php
+                if (preg_match('#/[a-z0-9\-\.]+#', $key)) {
+                    continue;
+                }
                 // always retain classes
                 if (strpos($key, '--') === false) {
                     $na[$key] = $a[$key];
@@ -208,7 +212,7 @@ class DeprecationDiffTask extends BuildTask
             }
         }
         print_r([
-            '$removedInCms5ButNotDeprecatedInCms4' => $removedInCms5ButNotDeprecatedInCms4
+            'Removed in CMS 5 but not deprecated in CMS 4' => $cleanThing($removedInCms5ButNotDeprecatedInCms4, $deprecatedInCms4)
         ]);
         echo "\n===================\n";
         echo "\n\nRAW DATA\n\n";
@@ -227,7 +231,7 @@ class DeprecationDiffTask extends BuildTask
         $depr = [];
         foreach ($removedInCms5 as $key => $a) {
             if (strpos($key, '--') === false) {
-                if (preg_match('#/[a-z0-9\-]+#', $a['path'])) {
+                if (preg_match('#/[a-z0-9\-\.]+#', $a['path'])) {
                     // lowercase file name e.g. consts.php
                     continue;
                 }
