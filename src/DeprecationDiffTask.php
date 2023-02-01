@@ -2,8 +2,11 @@
 
 namespace emteknetnz\Deprecator;
 
+use phpDocumentor\Reflection\Types\Intersection;
 use PhpParser\Error;
 use PhpParser\Lexer;
+use PhpParser\Node\IntersectionType;
+use PhpParser\Node\NullableType;
 use PhpParser\ParserFactory;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
@@ -174,7 +177,7 @@ class DeprecationDiffTask extends BuildTask
                         ];
                     }
                     if (!isset($f['cms5'][$k][$name])) {
-                        $removedInCms5[$key]['deprecated'] = [
+                        $removedInCms5[$key] = [
                             'type' => $type,
                             'name' => $name,
                             'class' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
@@ -383,7 +386,7 @@ class DeprecationDiffTask extends BuildTask
             array_map(fn(Use_ $use) => (string) $use->uses[0]->name, $useStatements),
         );
         $namespace = $this->getNamespace($ast);
-        $ns = (string) $namespace->name;
+        $ns = $namespace ? (string) $namespace->name : '';
         $finfo['namespace'] = $namespace ? $namespace->name->toString() : '';
         $classes = $this->getClasses($ast);
         // if multiple classes in file, just use the first one (SapphireTest phpunit 9)
@@ -400,7 +403,6 @@ class DeprecationDiffTask extends BuildTask
                     'params' => $this->getParamsData($imports, $ns, $method), // ['name' => $name, 'type' => $type]
                     'returnType' => $this->getReturnType($imports, $ns, $method)
                 ];
-                print_r($finfo['methods'][$method->name->name]);
             }
             foreach ($this->getConfigs($class) as $config) {
                 $finfo['config'][$config->props[0]->name->name] = [
@@ -423,6 +425,9 @@ class DeprecationDiffTask extends BuildTask
                 $types = [$param->type];
                 if ($param->type instanceof UnionType) {
                     $types = $param->type->types;
+                } elseif ($param->type instanceof IntersectionType) {
+                    // this is probably technically wrong for IntersectionType
+                    $types = $param->type->types;
                 }
                 return [
                     'name' => $param->var->name,
@@ -440,6 +445,10 @@ class DeprecationDiffTask extends BuildTask
         if ($returnType instanceof UnionType) {
             $types = $returnType->types;
         }
+        if ($returnType instanceof IntersectionType) {
+            // this is probably technically wrong for IntersectionType
+            $types = $returnType->types;
+        }
         return $this->formatTypes($types, $imports, $ns);
     }
 
@@ -447,10 +456,12 @@ class DeprecationDiffTask extends BuildTask
     {
         $tys = [];
         foreach ($types as $type) {
-            $cn = (string) $type;
-            if (is_null($type)) {
+            if ($type instanceof NullableType) {
                 $tys[] = 'null';
-            } elseif (strtolower($cn) == $cn) {
+                continue;
+            }
+            $cn = (string) $type;
+            if (strtolower($cn) == $cn) {
                 $tys[] = $cn;
             } elseif (class_exists($cn) || interface_exists($cn) || trait_exists($cn)) {
                 $tys[] = $cn;
@@ -463,7 +474,7 @@ class DeprecationDiffTask extends BuildTask
         return implode('|', $tys);
     }
 
-    private function docBlockContainsDeprecated($node)
+    private function docBlockContainsDeprecated($node): bool
     {
         $docComment = $node->getDocComment();
         $docblock = '';
