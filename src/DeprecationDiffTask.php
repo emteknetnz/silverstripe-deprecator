@@ -125,6 +125,7 @@ class DeprecationDiffTask extends BuildTask
         $removedInCms5 = [];
         $deprecatedInCms4 = [];
         $deprecatedInCms5 = [];
+        $paramsDiff = [];
         foreach (array_keys($finfo) as $path) {
             $f = $finfo[$path];
             // classes
@@ -196,8 +197,34 @@ class DeprecationDiffTask extends BuildTask
                         ];
                     }
                 }
+                if ($k == 'methods') {
+                    for ($i = 0; $i < count($f['cms4'][$k][$name]['params'] ?? []); $i++) {
+                        // skip if the method doesn't exist in cms5
+                        if (!isset($f['cms5'][$k][$name])) {
+                            continue;
+                        }
+                        $key = "$path--$type-$name.$i";
+                        $cms4_param_type = $f['cms4'][$k][$name]['params'][$i]['type'] ?? '';
+                        $cms4_param_name = $f['cms4'][$k][$name]['params'][$i]['name'] ?? '';
+                        $cms5_param_type = $f['cms5'][$k][$name]['params'][$i]['type'] ?? '';
+                        $cms5_param_name = $f['cms5'][$k][$name]['params'][$i]['name'] ?? '';
+                        if ($cms4_param_name != $cms5_param_name || $cms4_param_type != $cms5_param_type) {
+                            $paramsDiff[$key] = [
+                                'type' => 'param',
+                                'name' => "$name.$i",
+                                'class' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
+                                'path' => $path,
+                                'cms4_param_type' => $cms4_param_type,
+                                'cms4_param_name' => $cms4_param_name,
+                                'cms5_param_type' => $cms5_param_type,
+                                'cms5_param_name' => $cms5_param_name,
+                            ];
+                        }
+                    }
+                }
             }
         }
+        print_r($paramsDiff);die;
         $deprecatedInBothCms4AndCms5 = [];
         foreach ($deprecatedInCms4 as $key => $a) {
             if (isset($deprecatedInCms5[$key])) {
