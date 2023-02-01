@@ -141,7 +141,9 @@ class DeprecationTask extends BuildTask
         ]);
         $parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7, $lexer);
         try {
-            $ast = $parser->parse($code);
+            // note: the str_replace() is untested for the context of DeprecationTask
+            // I copied this in after using it on DeprecationDiffTask.php
+            $ast = $parser->parse(str_replace('declare(strict_types=1);', '', $code));
         } catch (Error $error) {
             echo "Parse error: {$error->getMessage()}\n";
             die;

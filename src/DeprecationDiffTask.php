@@ -8,12 +8,11 @@ use PhpParser\ParserFactory;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\If_;
+use PhpParser\Node\Stmt\Interface_;
 use PhpParser\Node\Stmt\Namespace_;
 use PhpParser\Node\Stmt\Property;
 use PhpParser\Node\Stmt\Trait_;
 use SilverStripe\Dev\BuildTask;
-use PhpParser\PrettyPrinter;
-use SilverStripe\Dev\Deprecation;
 
 class DeprecationDiffTask extends BuildTask
 {
@@ -31,6 +30,8 @@ class DeprecationDiffTask extends BuildTask
     private $updatedDirs = [];
 
     private $currentPath = '';
+
+    private $changelog = [];
 
     public function run($request)
     {
@@ -63,8 +64,8 @@ class DeprecationDiffTask extends BuildTask
                     continue;
                 }
                 $dir = "$vendorDir/$subdir";
-                if ($dir != '/var/www/vendor/cwp/cwp-core') {
-                    continue;
+                if ($dir != '/var/www/vendor/silverstripe/mfa') {
+                    // continue;
                 }
                 foreach ([
                     'src',
@@ -83,6 +84,9 @@ class DeprecationDiffTask extends BuildTask
                 $this->fileinfo = [];
             }
         }
+        echo "\n\nCHANGELOG:\n\n";
+        echo implode("\n", $this->changelog);
+        echo "\n\n";
     }
 
     public function output(string $dir)
@@ -131,7 +135,7 @@ class DeprecationDiffTask extends BuildTask
                 $type = $k == 'methods' ? 'method' : ($k == 'properties' ? 'property' : 'config');
                 foreach (array_keys($f['cms4'][$k]) as $name) {
                     $key = "$path--$type-$name";
-                    if ($f['cms4'][$k][$name]['deprecated'] ?? false) {
+                    if ($f['cms4'][$k][$name] ?? false) {
                         $deprecatedInCms4[$key] = [
                             'type' => $type,
                             'name' => $name,
@@ -139,7 +143,7 @@ class DeprecationDiffTask extends BuildTask
                             'path' => $path,
                         ];
                     }
-                    if ($f['cms5'][$k][$name]['deprecated'] ?? false) {
+                    if ($f['cms5'][$k][$name] ?? false) {
                         $deprecatedInCms5[$key] = [
                             'type' => $type,
                             'name' => $name,
@@ -196,14 +200,6 @@ class DeprecationDiffTask extends BuildTask
         //
         $iden = str_replace('/', '-', str_replace('/var/www/vendor/', '', $dir));
         ob_start();
-        echo "\n\nRAW DATA\n\n";
-        print_r([
-            'addedInCms5' => $addedInCms5,
-            'removedInCms5' => $cleanThing($removedInCms5),
-            'deprecatedInCms4' => $deprecatedInCms4,
-            'deprecatedInCms5' => $deprecatedInCms5,
-            'deprecatedInBothCms4AndCms5' => $deprecatedInBothCms4AndCms5,
-        ]);
         echo "\n\nTO ACTION\n\n";
         $removedInCms5ButNotDeprecatedInCms4 = [];
         foreach ($removedInCms5 as $key => $a) {
@@ -212,12 +208,54 @@ class DeprecationDiffTask extends BuildTask
             }
         }
         print_r([
-            'removedInCms5ButNotDeprecatedInCms4' => $cleanThing($removedInCms5ButNotDeprecatedInCms4, $deprecatedInCms4),
+            '$removedInCms5ButNotDeprecatedInCms4' => $removedInCms5ButNotDeprecatedInCms4
+        ]);
+        echo "\n===================\n";
+        echo "\n\nRAW DATA\n\n";
+        print_r([
+            'addedInCms5' => $addedInCms5,
+            'removedInCms5' => $cleanThing($removedInCms5),
+            'deprecatedInCms4' => $deprecatedInCms4,
+            'deprecatedInCms5' => $deprecatedInCms5,
+            'deprecatedInBothCms4AndCms5' => $deprecatedInBothCms4AndCms5,
         ]);
         $s = ob_get_clean();
         $f = BASE_PATH . '/_output/' . $iden . '.txt';
         file_put_contents($f, $s);
         echo "Wrote to $f\n";
+
+        $depr = [];
+        foreach ($removedInCms5 as $key => $a) {
+            if (strpos($key, '--') === false) {
+                if (preg_match('#/[a-z0-9\-]+#', $a['path'])) {
+                    // lowercase file name e.g. consts.php
+                    continue;
+                }
+                $depr[] = "- Removed deprecated class `{$a['name']}`";
+            }
+        }
+        foreach ($removedInCms5 as $key => $a) {
+            if (strpos($key, '--') !== false) {
+                $classKey = explode('--', $key)[0];
+                if (isset($removedInCms5[$classKey])) {
+                    continue;
+                }
+                $depr[] = "- Removed deprecated method `{$a['class']}::{$a['name']}()`";
+            }
+        }
+        if (!empty($depr)) {
+            $this->changelog[] = '';
+            $this->changelog[] = '#### ' . $this->getComposerName($dir);
+            $this->changelog[] = '';
+            foreach ($depr as $line) {
+                $this->changelog[] = $line;
+            }
+        }
+    }
+
+    private function getComposerName($dir)
+    {
+        return json_decode(file_get_contents("$dir/composer.json"))->name;
     }
 
     private function log($s)
@@ -300,7 +338,7 @@ class DeprecationDiffTask extends BuildTask
             $classes = [$classes[0]];
         }
         foreach ($classes as $class) {
-            $finfo['type'] = $class instanceof Class_ ? 'class' : 'trait';
+            $finfo['type'] = $class instanceof Class_ ? 'class' : ($class instanceof Trait_ ? 'trait' : 'interface');
             $finfo['name'] = $class->name->name;
             $finfo['deprecated'] = $this->docBlockContainsDeprecated($class);
             foreach ($this->getMethods($class) as $method) {
@@ -323,7 +361,7 @@ class DeprecationDiffTask extends BuildTask
         if ($docComment !== null) {
             $docblock = $docComment->getText();
         }
-        return strpos($docblock, ' * @deprecated') !== false;
+        return strpos($docblock, '* @deprecated') !== false;
     }
 
     private function cTest()
@@ -344,12 +382,12 @@ class DeprecationDiffTask extends BuildTask
     {
         $ret = [];
         $a = ($ast[0] ?? null) instanceof Namespace_ ? $ast[0]->stmts : $ast;
-        $ret = array_merge($ret, array_filter($a, fn($v) => $v instanceof Class_ || $v instanceof Trait_));
+        $ret = array_merge($ret, array_filter($a, fn($v) => $v instanceof Class_ || $v instanceof Trait_ || $v instanceof Interface_));
         // SapphireTest and other file with dual classes
         $i = array_filter($a, fn($v) => $v instanceof If_);
         foreach ($i as $if) {
             foreach ($if->stmts ?? [] as $v) {
-                if ($v instanceof Class_ || $v instanceof Trait_) {
+                if ($v instanceof Class_ || $v instanceof Trait_ || $v instanceof Interface_) {
                     $ret[] = $v;
                 }
             }
@@ -357,7 +395,7 @@ class DeprecationDiffTask extends BuildTask
         return $ret;
     }
 
-    private function getConfigs(Class_|Trait_ $class): array
+    private function getConfigs(Class_|Trait_|Interface_ $class): array
     {
         return array_filter(
             $class->stmts, function ($v) {
@@ -369,7 +407,7 @@ class DeprecationDiffTask extends BuildTask
     }
 
     // only public + protected properties
-    private function getProperties(Class_|Trait_ $class): array
+    private function getProperties(Class_|Trait_|Interface_ $class): array
     {
         return array_filter(
             $class->stmts, function ($v) {
@@ -381,7 +419,7 @@ class DeprecationDiffTask extends BuildTask
     }
 
     // only public + protected methods
-    private function getMethods(Class_|Trait_ $class): array
+    private function getMethods(Class_|Trait_|Interface_ $class): array
     {
         return array_filter($class->stmts, fn($v) => ($v instanceof ClassMethod) && !$v->isPrivate());
     }
@@ -401,7 +439,7 @@ class DeprecationDiffTask extends BuildTask
         ]);
         $parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7, $lexer);
         try {
-            $ast = $parser->parse($code);
+            $ast = $parser->parse(str_replace('declare(strict_types=1);', '', $code));
         } catch (Error $error) {
             echo "Parse error: {$error->getMessage()}\n";
             die;
