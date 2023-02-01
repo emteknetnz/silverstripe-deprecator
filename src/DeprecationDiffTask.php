@@ -91,7 +91,7 @@ class DeprecationDiffTask extends BuildTask
                 }
                 $dir = "$vendorDir/$subdir";
                 if ($dir != '/var/www/vendor/silverstripe/framework') {
-                    continue;
+                    // continue;
                 }
                 foreach ([
                     'src',
@@ -126,6 +126,7 @@ class DeprecationDiffTask extends BuildTask
         $deprecatedInCms4 = [];
         $deprecatedInCms5 = [];
         $paramsDiff = [];
+        $returnTypesDiff = [];
         foreach (array_keys($finfo) as $path) {
             $f = $finfo[$path];
             // classes
@@ -211,20 +212,32 @@ class DeprecationDiffTask extends BuildTask
                         if ($cms4_param_name != $cms5_param_name || $cms4_param_type != $cms5_param_type) {
                             $paramsDiff[$key] = [
                                 'type' => 'param',
-                                'name' => "$name.$i",
+                                'name' => "$name",
                                 'class' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
                                 'path' => $path,
-                                'cms4_param_type' => $cms4_param_type,
                                 'cms4_param_name' => $cms4_param_name,
-                                'cms5_param_type' => $cms5_param_type,
                                 'cms5_param_name' => $cms5_param_name,
+                                'cms4_param_type' => $cms4_param_type,
+                                'cms5_param_type' => $cms5_param_type,
+                            ];
+                        }
+                    }
+                    if (isset($f['cms4'][$k][$name]['returnType']) && isset($f['cms5'][$k][$name]['returnType'])) {
+                        if ($f['cms4'][$k][$name]['returnType'] != $f['cms5'][$k][$name]['returnType']) {
+                            $key = "$path--$type-$name.returnType";
+                            $returnTypesDiff[$key] = [
+                                'type' => 'returnType',
+                                'name' => $name,
+                                'class' => $f['cms4']['namespace'] . '\\' . $f['cms4']['name'],
+                                'path' => $path,
+                                'cms4_returnType' => $f['cms4'][$k][$name]['returnType'],
+                                'cms5_returnType' => $f['cms5'][$k][$name]['returnType'],
                             ];
                         }
                     }
                 }
             }
         }
-        print_r($paramsDiff);die;
         $deprecatedInBothCms4AndCms5 = [];
         foreach ($deprecatedInCms4 as $key => $a) {
             if (isset($deprecatedInCms5[$key])) {
@@ -278,12 +291,15 @@ class DeprecationDiffTask extends BuildTask
             'deprecatedInCms4' => $deprecatedInCms4,
             'deprecatedInCms5' => $deprecatedInCms5,
             'deprecatedInBothCms4AndCms5' => $deprecatedInBothCms4AndCms5,
+            'paramsDiff' => $paramsDiff,
+            'returnTypesDiff' => $returnTypesDiff,
         ]);
         $s = ob_get_clean();
         $f = BASE_PATH . '/_output/' . $iden . '.txt';
         file_put_contents($f, $s);
         echo "Wrote to $f\n";
 
+        ksort($removedInCms5);
         $depr = [];
         foreach ($removedInCms5 as $key => $a) {
             if (strpos($key, '--') === false) {
@@ -301,9 +317,34 @@ class DeprecationDiffTask extends BuildTask
                     continue;
                 }
                 if ($this->isFrameworkEmailMethod($key)) {
-                    $depr[] = "- Method `{$a['class']}::{$a['name']}() is now defined in Symfony\Component\Mime\Email.php with a different method signature`";
+                    $depr[] = "- Method `{$a['class']}::{$a['name']}()` is now defined in `Symfony\Component\Mime\Email` with a different method signature`";
                 } else {
                     $depr[] = "- Removed deprecated method `{$a['class']}::{$a['name']}()`";
+                }
+            }
+        }
+        $jointDiff = array_merge($paramsDiff, $returnTypesDiff);
+        ksort($jointDiff);
+        foreach ($jointDiff as $key => $a) {
+            $classKey = explode('--', $key)[0];
+            if (isset($removedInCms5[$classKey])) {
+                continue;
+            }
+            $untyped = 'dynamic';
+            if (str_contains($key, 'returnType')) {
+                $cms4_returnType = $a['cms4_returnType'] ?: $untyped;
+                $cms5_returnType = $a['cms5_returnType'] ?: $untyped;
+                $depr[] = "- Return type changed for `{$a['class']}::{$a['name']}()` from `$cms4_returnType` to `$cms5_returnType`";
+            } else {
+                $cms4_param_name = $a['cms4_param_name'];
+                $cms5_param_name = $a['cms5_param_name'];
+                $cms4_param_type = $a['cms4_param_type'] ?: $untyped;
+                $cms5_param_type = $a['cms5_param_type'] ?: $untyped;
+                if ($cms4_param_name != $cms5_param_name) {
+                    $depr[] = "- Changed parameter name in `{$a['class']}::{$a['name']}()` from `\${$cms4_param_name}` to `\${$cms5_param_name}`";
+                }
+                if ($cms4_param_type != $cms5_param_type && $cms5_param_name) {
+                    $depr[] = "- Changed parameter type in `{$a['class']}::{$a['name']}()` for `\${$cms5_param_name}` from `{$cms4_param_type}` to `{$cms5_param_type}`";
                 }
             }
         }
@@ -482,10 +523,11 @@ class DeprecationDiffTask extends BuildTask
     private function formatTypes(array $types, array $imports, string $ns): string
     {
         $tys = [];
+        $isNullable = false;
         foreach ($types as $type) {
             if ($type instanceof NullableType) {
-                $tys[] = 'null';
-                continue;
+                $isNullable = true;
+                $type = $type->type;
             }
             $cn = (string) $type;
             if (strtolower($cn) == $cn) {
@@ -497,6 +539,9 @@ class DeprecationDiffTask extends BuildTask
             } else {
                 $tys[] = "$ns\\$cn";
             }
+        }
+        if ($isNullable) {
+            $tys[] = 'null';
         }
         return implode('|', $tys);
     }
