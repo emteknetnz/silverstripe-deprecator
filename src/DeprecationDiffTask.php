@@ -355,7 +355,7 @@ class DeprecationDiffTask extends BuildTask
                 $cms4_param_type = $a['cms4_param_type'] ?: $untyped;
                 $cms5_param_type = $a['cms5_param_type'] ?: $untyped;
                 if (empty($cms5_param_name)) {
-                    $depr[] = "- Removed parameter in {$this->getChangelogMethodApiLink($a)} named `\${$cms4_param_name}";
+                    $depr[] = "- Removed parameter in {$this->getChangelogMethodApiLink($a)} named `\${$cms4_param_name}`";
                 } else {
                     if ($cms4_param_name != $cms5_param_name) {
                         $depr[] = "- Changed parameter name in {$this->getChangelogMethodApiLink($a)} from `\${$cms4_param_name}` to `\${$cms5_param_name}`";
