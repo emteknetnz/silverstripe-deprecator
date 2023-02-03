@@ -48,6 +48,7 @@ class DeprecationDiffTask extends BuildTask
         'getFrom',
         'addFrom',
         'getSender',
+        'getBody',
         'getReturnPath',
         'getTo',
         'addTo',
@@ -92,8 +93,8 @@ class DeprecationDiffTask extends BuildTask
                     continue;
                 }
                 $dir = "$vendorDir/$subdir";
-                if ($dir != '/var/www/vendor/silverstripe/framework') {
-                    //continue;
+                if ($dir != '/var/www/vendor/silverstripe/assets') {
+                    // continue;
                 }
                 foreach ([
                     'src',
@@ -472,6 +473,9 @@ class DeprecationDiffTask extends BuildTask
                 }
                 $code = file_get_contents($path);
                 if (strpos($code, "\nenum ") !== false) {
+                    continue;
+                }
+                if (strpos($code, "\nclass ") === false && strpos($code, "\ninterface ") === false && strpos($code, "\ntrait ") === false) {
                     continue;
                 }
                 $this->fileinfo[$path] ??= [];
