@@ -472,12 +472,20 @@ class DeprecationDiffTask extends BuildTask
                     continue;
                 }
                 $code = file_get_contents($path);
+                if (str_contains($path, '/Query.php')) echo "*1\n";
                 if (strpos($code, "\nenum ") !== false) {
                     continue;
                 }
-                if (strpos($code, "\nclass ") === false && strpos($code, "\ninterface ") === false && strpos($code, "\ntrait ") === false) {
+                if (strpos($code, "\nclass ") === false &&
+                    strpos($code, "\nabstract class ") === false &&
+                    strpos($code, "\ninterface ") === false &&
+                    strpos($code, "\ntrait ") === false &&
+                    strpos($code, "\nabstract trait ") === false
+                ) {
+                    if (str_contains($path, '/Query.php')) echo "*2\n";
                     continue;
                 }
+                if (str_contains($path, '/Query.php')) echo "*3\n";
                 $this->fileinfo[$path] ??= [];
                 foreach (['cms4', 'cms5'] as $c) {
                     $this->fileinfo[$path][$c] ??= [
