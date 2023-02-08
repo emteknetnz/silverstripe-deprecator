@@ -63,6 +63,11 @@ class DeprecationDiffTask extends BuildTask
         'getPriority'
     ];
 
+    private $frameworkSapphireTestMethods = [
+        'assertContains',
+        'assertNotContains',
+    ];
+
     public function run($request)
     {
         if (file_exists(BASE_PATH . "/_output")) {
@@ -77,12 +82,12 @@ class DeprecationDiffTask extends BuildTask
         }
         file_put_contents(BASE_PATH . "/_output/_log.txt", '');
         $vendorDirs = [
-            BASE_PATH . '/vendor/dnadesign',
-            BASE_PATH . '/vendor/silverstripe',
-            BASE_PATH . '/vendor/symbiote',
             // BASE_PATH . '/vendor/bringyourownideas',
             // BASE_PATH . '/vendor/colymba',
             BASE_PATH . '/vendor/cwp',
+            BASE_PATH . '/vendor/dnadesign',
+            BASE_PATH . '/vendor/silverstripe',
+            BASE_PATH . '/vendor/symbiote',
             // BASE_PATH . '/vendor/tractorcow',
         ];
         foreach ($vendorDirs as $vendorDir) {
@@ -94,8 +99,8 @@ class DeprecationDiffTask extends BuildTask
                     continue;
                 }
                 $dir = "$vendorDir/$subdir";
-                if ($dir != '/var/www/vendor/silverstripe/assets') {
-                    // continue;
+                if ($dir != '/var/www/vendor/dnadesign/silverstripe-elemental') {
+                    //continue;
                 }
                 foreach ([
                     'src',
@@ -295,6 +300,9 @@ class DeprecationDiffTask extends BuildTask
             if ($this->isFrameworkEmailMethod($key)) {
                 continue;
             }
+            if ($this->isFrameworkSapphireTestMethods($key)) {
+                continue;
+            }
             $removedInCms5ButNotDeprecatedInCms4[$key] = $a;
         }
         $toDeprecateInCms4 = $cleanThing($removedInCms5ButNotDeprecatedInCms4, $deprecatedInCms4);
@@ -340,6 +348,8 @@ class DeprecationDiffTask extends BuildTask
                     // e.g. https://api.silverstripe.org/5/SilverStripe/Dev/SapphireTest.html which extends
                     // phpunit TestCase does NOT contain info about assertSame()
                     $depr[] = "- Method {$this->getChangelogThing($a, $type)} is now defined in `Symfony\Component\Mime\Email` with a different method signature";
+                } elseif ($this->isFrameworkSapphireTestMethods($key)) {
+                    $depr[] = "- Method {$this->getChangelogThing($a, $type)} is now defined in `PHPUnit\Framework\Assert` with a different method signature";
                 } else {
                     $depr[] = "- Removed deprecated $type {$this->getChangelogThing($a, $type)}";
                 }
@@ -370,7 +380,7 @@ class DeprecationDiffTask extends BuildTask
                     ? $this->styleType($a['cms5_param_type'])
                     : $untyped;
                 if (empty($cms5_param_name)) {
-                    $depr[] = "- Removed parameter in {$this->getChangelogMethodApiLink($a)} named `\${$cms4_param_name}`";
+                    $depr[] = "- Removed deprecated parameter in {$this->getChangelogMethodApiLink($a)} named `\${$cms4_param_name}`";
                 } else {
                     if ($cms4_param_name != $cms5_param_name) {
                         $depr[] = "- Changed parameter name in {$this->getChangelogMethodApiLink($a)} from `\${$cms4_param_name}` to `\${$cms5_param_name}`";
@@ -399,12 +409,17 @@ class DeprecationDiffTask extends BuildTask
             }
             $p = [
                 'Removed deprecated class',
+                'Removed deprecated trait',
+                'Removed deprecated interface',
                 'Removed deprecated method',
                 'Removed deprecated config',
                 'Removed deprecated constant',
                 'Removed deprecated property',
+                'Removed deprecated parameter',
+                'Method `SilverStripe', // Email.php
                 'Changed return type',
-                'Changed parameter type'
+                'Changed parameter type',
+                'Changed parameter name'
             ];
             $ap = 99;
             $bp = 99;
@@ -435,15 +450,42 @@ class DeprecationDiffTask extends BuildTask
 
     private function styleType($t)
     {
+        $x = 'SilverStripe\\';
+        $ts = explode('|', $t);
+        usort($ts, function($a, $b) use ($x) {
+            if (str_contains($a, $x) && !str_contains($b, $x)) {
+                return -1;
+            }
+            if (str_contains($b, $x) && !str_contains($a, $x)) {
+                return 1;
+            }
+            return 0;
+        });
         $r = [];
-        foreach (explode('|', $t) as $s) {
-            if (strpos($s, 'SilverStripe\\') === 0) {
-                $r[] = "[`{$s}`](api:{$s})";
+        $hasX = false;
+        $prevWasX = false;
+        for ($i = 0; $i < count($ts); $i++) {
+            $s = $ts[$i];
+            if (strpos($s, $x) === 0) {
+                $r[] = "|[`{$s}`](api:{$s})";
+                $prevWasX = true;
+                $hasX = true;
             } else {
-                $r[] = "`$s`";
+                if ($prevWasX) {
+                    $r[] = "`|$s";
+                } else {
+                    $r[] = "|$s";
+                }
+                $prevWasX = false;
             }
         }
-        return implode('|', $r);
+        if (!$prevWasX) {
+            $r[] = '`';
+        }
+        if (!$hasX) {
+            array_unshift($r, '`');
+        }
+        return preg_replace('#^\|#', '', preg_replace('#^`\|#', '`', implode('', $r)));
     }
 
     private function getChangelogMethodApiLink($a)
@@ -471,6 +513,18 @@ class DeprecationDiffTask extends BuildTask
             if (str_contains($key, '--')) {
                 $method = explode('-', explode('--', $key)[1])[1];
                 if (in_array($method, $this->frameworkEmailMethods)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private function isFrameworkSapphireTestMethods($key) {
+        if (str_contains($key, 'SapphireTest.php')) {
+            if (str_contains($key, '--')) {
+                $method = explode('-', explode('--', $key)[1])[1];
+                if (in_array($method, $this->frameworkSapphireTestMethods)) {
                     return true;
                 }
             }
