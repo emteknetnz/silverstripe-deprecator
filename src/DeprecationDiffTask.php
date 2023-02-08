@@ -14,6 +14,7 @@ use PhpParser\Node\Stmt\If_;
 use PhpParser\Node\Stmt\Interface_;
 use PhpParser\Node\Stmt\Namespace_;
 use PhpParser\Node\Stmt\Property;
+use PhpParser\Node\Stmt\ClassConst;
 use PhpParser\Node\Stmt\Trait_;
 use SilverStripe\Dev\BuildTask;
 use PhpParser\Node\Param;
@@ -94,7 +95,7 @@ class DeprecationDiffTask extends BuildTask
                 }
                 $dir = "$vendorDir/$subdir";
                 if ($dir != '/var/www/vendor/silverstripe/assets') {
-                    // continue;
+                    continue;
                 }
                 foreach ([
                     'src',
@@ -168,8 +169,12 @@ class DeprecationDiffTask extends BuildTask
                     'path' => $path,
                 ];
             }
-            foreach (['methods', 'config', 'properties'] as $k) {
-                $type = $k == 'methods' ? 'method' : ($k == 'properties' ? 'property' : 'config');
+            foreach (['methods', 'config', 'properties', 'constants'] as $k) {
+                $type = '';
+                if ($k == 'methods') $type = 'method';
+                if ($k == 'properties') $type = 'property';
+                if ($k == 'config') $type = 'config';
+                if ($k == 'constants') $type = 'constant';
                 foreach (array_keys($f['cms4'][$k]) as $name) {
                     $key = "$path--$type-$name";
                     if ($f['cms4'][$k][$name]['deprecated'] ?? false) {
@@ -316,16 +321,17 @@ class DeprecationDiffTask extends BuildTask
         $depr = [];
         foreach ($removedInCms5 as $key => $a) {
             if (strpos($key, '--') === false) {
-                if (preg_match('#/[a-z0-9\-\.]+#', $a['path'])) {
+                if (preg_match('#/[a-z0-9\-\.]+$#', $a['path'])) {
                     // lowercase file name e.g. consts.php
                     continue;
                 }
-                $depr[] = "- Removed deprecated class `{$a['name']}`";
+                $depr[] = "- Removed deprecated {$a['type']} `{$a['name']}`";
             }
         }
         foreach ($removedInCms5 as $key => $a) {
             if (strpos($key, '--') !== false) {
                 $classKey = explode('--', $key)[0];
+                $type = explode('-', explode('--', $key)[1])[0];
                 if (isset($removedInCms5[$classKey])) {
                     continue;
                 }
@@ -333,9 +339,9 @@ class DeprecationDiffTask extends BuildTask
                     // note: the API docs DO NOT contain details for API inherited from vendor classes
                     // e.g. https://api.silverstripe.org/5/SilverStripe/Dev/SapphireTest.html which extends
                     // phpunit TestCase does NOT contain info about assertSame()
-                    $depr[] = "- Method {$this->getChangelogMethod($a)} is now defined in `Symfony\Component\Mime\Email` with a different method signature`";
+                    $depr[] = "- Method {$this->getChangelogThing($a, $type)} is now defined in `Symfony\Component\Mime\Email` with a different method signature";
                 } else {
-                    $depr[] = "- Removed deprecated method {$this->getChangelogMethod($a)}}";
+                    $depr[] = "- Removed deprecated $type {$this->getChangelogThing($a, $type)}";
                 }
             }
         }
@@ -347,14 +353,22 @@ class DeprecationDiffTask extends BuildTask
             }
             $untyped = 'dynamic';
             if (str_contains($key, 'returnType')) {
-                $cms4_returnType = $a['cms4_returnType'] ?: $untyped;
-                $cms5_returnType = $a['cms5_returnType'] ?: $untyped;
-                $depr[] = "- Changed return type for {$this->getChangelogMethodApiLink($a)} from `$cms4_returnType` to `$cms5_returnType`";
+                $cms4_returnType = $a['cms4_returnType']
+                    ? $this->styleType($a['cms4_returnType'])
+                    : $untyped;
+                $cms5_returnType = $a['cms5_returnType']
+                    ? $this->styleType($a['cms5_returnType'])
+                    : $untyped;
+                $depr[] = "- Changed return type for {$this->getChangelogMethodApiLink($a)} from $cms4_returnType to $cms5_returnType";
             } else {
                 $cms4_param_name = $a['cms4_param_name'];
                 $cms5_param_name = $a['cms5_param_name'];
-                $cms4_param_type = $a['cms4_param_type'] ?: $untyped;
-                $cms5_param_type = $a['cms5_param_type'] ?: $untyped;
+                $cms4_param_type = $a['cms4_param_type']
+                    ? $this->styleType($a['cms4_param_type'])
+                    : $untyped;
+                $cms5_param_type = $a['cms5_param_type']
+                    ? $this->styleType($a['cms5_param_type'])
+                    : $untyped;
                 if (empty($cms5_param_name)) {
                     $depr[] = "- Removed parameter in {$this->getChangelogMethodApiLink($a)} named `\${$cms4_param_name}`";
                 } else {
@@ -362,7 +376,7 @@ class DeprecationDiffTask extends BuildTask
                         $depr[] = "- Changed parameter name in {$this->getChangelogMethodApiLink($a)} from `\${$cms4_param_name}` to `\${$cms5_param_name}`";
                     }
                     if ($cms4_param_type != $cms5_param_type) {
-                        $depr[] = "- Changed parameter type in {$this->getChangelogMethodApiLink($a)} for `\${$cms5_param_name}` from `{$cms4_param_type}` to `{$cms5_param_type}`";
+                        $depr[] = "- Changed parameter type in {$this->getChangelogMethodApiLink($a)} for `\${$cms5_param_name}` from {$cms4_param_type} to {$cms5_param_type}";
                     }
                 }
             }
@@ -383,7 +397,31 @@ class DeprecationDiffTask extends BuildTask
                     die;
                 }
             }
-            return strtolower($ma[1]) <=> strtolower($mb[1]);
+            $p = [
+                'Removed deprecated class',
+                'Removed deprecated method',
+                'Removed deprecated config',
+                'Removed deprecated constant',
+                'Removed deprecated property',
+                'Changed return type',
+                'Changed parameter type'
+            ];
+            $ap = 99;
+            $bp = 99;
+            for ($i = 0; $i < count($p); $i++) {
+                $s = $p[$i];
+                if (str_contains($a, $s)) {
+                    $ap = $i;
+                }
+                if (str_contains($b, $s)) {
+                    $bp = $i;
+                }
+            }
+            if ($ap == $bp) {
+                return strtolower($ma[1]) <=> strtolower($mb[1]);
+            } else {
+                return $ap <=> $bp;
+            }
         });
         if (!empty($depr)) {
             $this->changelog[] = '';
@@ -395,14 +433,36 @@ class DeprecationDiffTask extends BuildTask
         }
     }
 
-    private function getChangelogMethodApiLink($a)
+    private function styleType($t)
     {
-        return "[{$a['class']}::{$a['name']}()](api:{$a['class']}::{$a['name']}())";
+        $r = [];
+        foreach (explode('|', $t) as $s) {
+            if (strpos($s, 'SilverStripe\\') === 0) {
+                $r[] = "[`{$s}`](api:{$s})";
+            } else {
+                $r[] = "`$s`";
+            }
+        }
+        return implode('|', $r);
     }
 
-    private function getChangelogMethod($a)
+    private function getChangelogMethodApiLink($a)
     {
-        return "`{$a['class']}::{$a['name']}()`";
+        return "[`{$a['class']}::{$a['name']}()`](api:{$a['class']}::{$a['name']}())";
+    }
+
+    private function getChangelogThing($a, $type)
+    {
+        if ($type == 'method') {
+            return "`{$a['class']}::{$a['name']}()`";
+        } elseif ($type == 'constant') {
+            return "`{$a['class']}::{$a['name']}`";
+        } elseif ($type == 'config') {
+            return "`{$a['class']}.{$a['name']}`";
+        } else {
+            // property
+            return "`{$a['class']}::\${$a['name']}`";
+        }
     }
 
     private function isFrameworkEmailMethod($key)
@@ -492,7 +552,8 @@ class DeprecationDiffTask extends BuildTask
                         'deprecated' => false,
                         'config' => [],
                         'properties' => [],
-                        'methods' => []
+                        'methods' => [],
+                        'constants' => [],
                     ];
                 }
                 $this->extract($code, $this->fileinfo[$path][$cms]);
@@ -535,6 +596,11 @@ class DeprecationDiffTask extends BuildTask
             foreach ($this->getProperties($class) as $property) {
                 $finfo['properties'][$property->props[0]->name->name] = [
                     'deprecated' => $this->docBlockContainsDeprecated($property)
+                ];
+            }
+            foreach ($this->getConstants($class) as $constant) {
+                $finfo['constants'][$constant->consts[0]->name->name] = [
+                    'deprecated' => $this->docBlockContainsDeprecated($constant)
                 ];
             }
         }
@@ -669,6 +735,18 @@ class DeprecationDiffTask extends BuildTask
                 /** @var Property $p */
                 $p = $v;
                 return ($p instanceof Property) && !$p->isPrivate();
+            }
+        );
+    }
+
+    // only public + protected constants
+    private function getConstants(Class_|Trait_|Interface_ $class): array
+    {
+        return array_filter(
+            $class->stmts, function ($v) {
+                /** @var ConClassConststant $p */
+                $c = $v;
+                return ($c instanceof ClassConst) && !$c->isPrivate();
             }
         );
     }
