@@ -95,7 +95,7 @@ class DeprecationDiffTask extends BuildTask
                 }
                 $dir = "$vendorDir/$subdir";
                 if ($dir != '/var/www/vendor/silverstripe/assets') {
-                    continue;
+                    // continue;
                 }
                 foreach ([
                     'src',
